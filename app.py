@@ -8,88 +8,96 @@ from datetime import datetime, timedelta
 import urllib.request
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
-import email.utils
 import base64
 import os
 
-# 網頁基本設定與 CSS 注入
-st.set_config(page_title="StockVision 智能台股戰情室", layout="wide", page_icon="📈")
+# 網頁基礎設定
+st.set_page_config(page_title="StockVision 智能台股戰情室", layout="wide", page_icon="📈")
 
-# ==========================================
-# 📊 資料載入優化 (只載入一次)
-# ==========================================
+#  CSS 樣式定義
+st.markdown("""
+    <style>
+    .block-container { padding-top: 1rem !important; }
+    [data-testid="stMetricValue"] { font-size: 1.4rem !important; }
+    .landing-title { font-size: 3rem; font-weight: 800; background: linear-gradient(45deg, #ff4b4b, #ff904f); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    </style>
+""", unsafe_allow_html=True)
+
+# 顯示 Logo 與標題
+def get_logo_html():
+    for filename in ["logo.png.jpg", "logo.png"]:
+        if os.path.exists(filename):
+            with open(filename, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return f'<img src="data:image/jpeg;base64,{b64}" width="55" style="margin-right: 15px; border-radius: 50%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">'
+    return "📈"
+
+st.markdown(f"""
+    <div style="display: flex; align-items: center; margin-bottom: 0.8rem; margin-top: -10px;">
+        {get_logo_html()}
+        <h2 style="margin: 0;">StockVision 智能台股戰情室</h2>
+    </div>
+""", unsafe_allow_html=True)
+
+# 初始化資料載入器
 api = DataLoader()
 
 @st.cache_data(ttl=86400) 
-def get_stock_names():
+def get_stock_info():
     try:
-        df_info = api.taiwan_stock_info()
-        # 建立名稱與代號的雙向映射
-        return dict(zip(df_info['stock_id'].astype(str), df_info['stock_name'])), df_info
-    except:
-        return {}, pd.DataFrame()
+        df = api.taiwan_stock_info()
+        return df.set_index('stock_id').to_dict('index')
+    except: return {}
 
-name_dict, df_info_all = get_stock_names()
+info_dict = get_stock_info()
 
-# ==========================================
-# 📌 側邊欄：搜尋引擎修正
-# ==========================================
-st.sidebar.header("📌 戰情室控制台")
+# 側邊欄控制台
+if 'selected_stock' not in st.session_state: st.session_state.selected_stock = ''
 
-# 使用 session_state 來儲存目前的股票
-if 'selected_stock' not in st.session_state:
-    st.session_state.selected_stock = '2330'
+st.sidebar.header("📌 控制台")
+search = st.sidebar.text_input("🔍 搜尋代號/名稱", placeholder="輸入如: 2330")
 
-# 改用單純的文字搜尋，配合下方按鈕過濾，最不容易壞
-search_val = st.sidebar.text_input("🔍 搜尋股票代號或名稱", placeholder="輸入如: 2330, 鴻海")
+if search:
+    matches = {sid: data for sid, data in info_dict.items() if search in sid or search in data.get('stock_name', '')}
+    for sid, data in list(matches.items())[:10]:
+        if st.sidebar.button(f"{sid} {data.get('stock_name', '')}"):
+            st.session_state.selected_stock = sid
+            st.rerun()
 
-if search_val:
-    # 搜尋邏輯：代號或名稱包含關鍵字
-    matches = df_info_all[df_info_all['stock_id'].str.contains(search_val) | 
-                          df_info_all['stock_name'].str.contains(search_val)]
+# 數據獲取模組 (包含上市櫃自動跳轉與防呆)
+@st.cache_data(ttl=300)
+def get_data(sid):
+    # 嘗試上市或上櫃抓取價格
+    for s in [".TW", ".TWO"]:
+        try:
+            ticker = yf.Ticker(f"{sid}{s}")
+            df = ticker.history(period="5y")
+            if not df.empty: return df, ticker.dividends, ticker.info
+        except: continue
+    return pd.DataFrame(), pd.Series(), {}
+
+# 主內容區
+if st.session_state.selected_stock:
+    sid = st.session_state.selected_stock
+    df, divs, info = get_data(sid)
     
-    if not matches.empty:
-        st.sidebar.markdown("👉 **找到以下股票：**")
-        for _, row in matches.head(10).iterrows():
-            if st.sidebar.button(f"{row['stock_id']} {row['stock_name']}", use_container_width=True):
-                st.session_state.selected_stock = str(row['stock_id'])
-                st.rerun()
+    if df.empty:
+        st.error("無法取得該股票資料，請檢查代號。")
     else:
-        st.sidebar.error("❌ 找不到相符的股票")
-
-# 快捷按鈕區
-st.sidebar.markdown("---")
-st.sidebar.write("⚡ 常用自選股：")
-quick_stocks = ["0050", "2330", "2317", "00878", "00981A", "0056"]
-cols = st.sidebar.columns(3)
-for stock in quick_stocks:
-    if cols[quick_stocks.index(stock)%3].button(stock):
-        st.session_state.selected_stock = stock
-        st.rerun()
-
-st.sidebar.markdown("---")
-# 均線與區間設定... (簡略，邏輯與前版一致)
-ma_fast = st.sidebar.number_input("快均線", value=5)
-ma_slow = st.sidebar.number_input("慢均線", value=20)
-timeframe = st.sidebar.radio("檢視區間", ["近一月", "近三月", "近半年", "近一年", "近五年"])
-
-# ==========================================
-# 🚀 顯示區塊 (增加數據回退機制)
-# ==========================================
-selected_stock = st.session_state.selected_stock
-if selected_stock:
-    # 抓資料
-    df, divs, info = get_price_data(selected_stock)
-    
-    # 基本面資料 (FinMind 失敗時改顯示 N/A，不崩潰)
-    pe_val, pb_val = "N/A", "N/A"
-    try:
-        f_data = api.taiwan_stock_per_pbr_and_dividend_yield(stock_id=selected_stock, start_date=(datetime.now()-timedelta(days=30)).strftime('%Y-%m-%d'))
-        if not f_data.empty:
-            pe_val = f"{f_data.iloc[-1].get('PER', 'N/A')}"
-            pb_val = f"{f_data.iloc[-1].get('PBR', 'N/A')}"
-    except:
-        pass
-
-    # 顯示... (其餘繪圖程式碼保持，確保變數 pe_val, pb_val 傳入)
-    # ... (記得在metric中顯示)
+        # 計算指標
+        df['MA5'] = df['Close'].rolling(5).mean()
+        df['MA20'] = df['Close'].rolling(20).mean()
+        
+        # 顯示指標卡片
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("最新收盤", f"${df['Close'].iloc[-1]:.2f}")
+        col2.metric("本益比", info.get('trailingPE', 'N/A'))
+        col3.metric("產業類別", info.get('sector', 'N/A'))
+        col4.metric("每股盈餘(EPS)", info.get('trailingEps', 'N/A'))
+        
+        # 繪圖
+        fig = gr.Figure(data=[gr.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
+        st.plotly_chart(fig, use_container_width=True)
+else:
+    st.markdown('<div class="landing-title">洞悉主力籌碼，精準打擊獲利。</div>', unsafe_allow_html=True)
+    st.write("請從左側搜尋股票代號開始使用。")
