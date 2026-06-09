@@ -31,21 +31,19 @@ st.markdown("""
     [data-testid="collapsedControl"] { background-color: #ff4b4b !important; border-radius: 8px; padding: 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: 0.3s; }
     [data-testid="collapsedControl"] svg { width: 28px !important; height: 28px !important; stroke: white !important; }
     [data-testid="collapsedControl"]:hover { background-color: #ff3333 !important; }
-    .landing-title { font-size: 3rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #ff4b4b, #ff904f); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 1rem; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🎨 標題與本機 Logo 自動讀取 (Base64 技術)
+# 🎨 標題與本機 Logo 自動讀取
 # ==========================================
 def get_logo_html():
-    # 自動尋找資料夾內的 logo 檔案 (相容 jpg 與 png 命名)
     for filename in ["logo.png.jpg", "logo.png"]:
         if os.path.exists(filename):
             with open(filename, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
             return f'<img src="data:image/jpeg;base64,{b64}" width="55" style="margin-right: 15px; border-radius: 50%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">'
-    return "📈" # 如果真的找不到檔案，顯示備用 Emoji
+    return "📈" 
 
 st.markdown(
     f"""
@@ -59,43 +57,39 @@ st.markdown(
 
 api = DataLoader()
 
+# --- 將 FinMind 資料庫升級，同時抓取名稱與產業類別 ---
 @st.cache_data(ttl=86400) 
-def get_stock_names():
+def get_tw_stock_info():
     try:
         df_info = api.taiwan_stock_info()
-        return dict(zip(df_info['stock_id'], df_info['stock_name']))
+        return df_info.set_index('stock_id').to_dict('index')
     except:
         return {}
 
-name_dict = get_stock_names()
+stock_info_dict = get_tw_stock_info()
 
 # ==========================================
-# 📌 側邊欄：控制台設定 (修復按鈕無效 Bug)
+# 📌 側邊欄：控制台設定
 # ==========================================
-# 初始化系統狀態
 if 'selected_stock' not in st.session_state: st.session_state.selected_stock = ''
 if 'search_box' not in st.session_state: st.session_state.search_box = ''
 
-# 建立點擊回呼函數：只要點按鈕，就強制作動並清空搜尋框，解除無限迴圈
 def select_stock(stock_id):
     st.session_state.selected_stock = stock_id
     st.session_state.search_box = "" 
 
 st.sidebar.header("📌 戰情室控制台")
 
-# 搜尋框與邏輯
 st.sidebar.text_input("🔍 搜尋股票代號或名稱", key="search_box", placeholder="例如: 2330 或 中華電")
 search_val = st.session_state.search_box.strip()
 
 if search_val:
-    if search_val in name_dict:
-        # 完全命中代號
+    if search_val in stock_info_dict:
         if st.session_state.selected_stock != search_val:
             st.session_state.selected_stock = search_val
             st.rerun()
     else:
-        # 模糊搜尋
-        matches = [sid for sid, name in name_dict.items() if search_val in str(name) or search_val in sid]
+        matches = [sid for sid, data in stock_info_dict.items() if search_val in str(data.get('stock_name', '')) or search_val in sid]
         if matches:
             if len(matches) == 1:
                 if st.session_state.selected_stock != matches[0]:
@@ -104,24 +98,23 @@ if search_val:
             else:
                 st.sidebar.markdown("👉 **找到以下相關股票，請點擊檢視：**")
                 for sid in matches[:15]: 
-                    # 綁定 Callback 函數
-                    st.sidebar.button(f"{sid} {name_dict[sid]}", on_click=select_stock, args=(sid,), key=f"btn_{sid}", use_container_width=True)
+                    name = stock_info_dict[sid].get('stock_name', '')
+                    st.sidebar.button(f"{sid} {name}", on_click=select_stock, args=(sid,), key=f"btn_{sid}", use_container_width=True)
         else:
             st.sidebar.error("❌ 找不到相符的股票")
 
 st.sidebar.markdown("---")
 
 if st.session_state.selected_stock:
-    st.sidebar.success(f"目前檢視：{st.session_state.selected_stock} {name_dict.get(st.session_state.selected_stock, '')}")
+    current_name = stock_info_dict.get(st.session_state.selected_stock, {}).get('stock_name', '')
+    st.sidebar.success(f"目前檢視：{st.session_state.selected_stock} {current_name}")
 
-# 首頁按鈕也綁定 Callback
 st.sidebar.button("🏠 回到戰情室首頁", on_click=select_stock, args=("",), use_container_width=True)
 
 st.sidebar.write("⚡ 常用自選股：")
 quick_stocks = ["0050", "2330", "2317", "00878", "00981A", "0056"]
 cols = st.sidebar.columns(3)
 for i, stock in enumerate(quick_stocks):
-    # 常用按鈕也綁定 Callback
     cols[i % 3].button(stock, on_click=select_stock, args=(stock,), key=f"qk_{stock}")
 
 st.sidebar.markdown("---")
@@ -150,26 +143,38 @@ start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
 selected_stock = st.session_state.selected_stock
 
 # ==========================================
-# 📊 抓取資料模組
+# 📊 抓取資料模組 (防呆機制升級版)
 # ==========================================
 @st.cache_data(ttl=300) 
 def get_price_data(stock_id):
-    df, divs, info = pd.DataFrame(), pd.Series(dtype='float64'), {}
+    df, divs = pd.DataFrame(), pd.Series(dtype='float64')
+    # 自動尋找上市 (.TW) 或上櫃 (.TWO)，解決寶雅 5904 抓不到的問題
+    for suffix in [".TW", ".TWO"]:
+        try:
+            ticker = yf.Ticker(f"{stock_id}{suffix}")
+            temp_df = ticker.history(period="5y")
+            if not temp_df.empty:
+                df = temp_df
+                df.index = df.index.tz_localize(None)
+                try: divs = ticker.dividends
+                except: pass
+                break # 成功抓到資料就跳出迴圈
+        except Exception:
+            continue
+    return df, divs
+
+# 改用 FinMind 抓取 100% 精準的台股本益比與淨值比
+@st.cache_data(ttl=86400)
+def get_fundamental_data(stock_id):
     try:
-        ticker = yf.Ticker(f"{stock_id}.TW")
-        df = ticker.history(period="5y")
-        if df.empty:
-            ticker = yf.Ticker(f"{stock_id}.TWO")
-            df = ticker.history(period="5y")
-        if not df.empty: 
-            df.index = df.index.tz_localize(None)
-            try: divs = ticker.dividends
-            except: pass
-            try: info = ticker.info
-            except: pass
+        start_dt = (datetime.today() - timedelta(days=14)).strftime('%Y-%m-%d')
+        df = api.taiwan_stock_per_pbr_and_dividend_yield(stock_id=stock_id, start_date=start_dt)
+        if not df.empty:
+            latest = df.iloc[-1]
+            return latest.get('PER', 'N/A'), latest.get('PBR', 'N/A')
     except:
         pass
-    return df, divs, info
+    return 'N/A', 'N/A'
 
 @st.cache_data(ttl=300)
 def get_inst_data(stock_id, start, end):
@@ -181,7 +186,6 @@ def get_stock_news(query):
     url = f"https://news.google.com/rss/search?q={quote(query)}+when:7d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        # 加入 3 秒 Timeout，防止抓不到新聞時造成整個網頁卡死
         with urllib.request.urlopen(req, timeout=3) as response: xml_data = response.read()
         root = ET.fromstring(xml_data)
         news = []
@@ -195,9 +199,6 @@ def get_stock_news(query):
         return news
     except: return []
 
-# ==========================================
-# 🤖 專業投顧 AI 分析引擎 
-# ==========================================
 def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if len(df) < 20: return "資料不足，無法進行深度解析。"
     
@@ -255,17 +256,17 @@ if not selected_stock:
         st.warning("#### 💰 歷年配息與基本面\n左右雙欄精煉設計，一鍵精算現價殖利率，並整合最新 Google 財經即時新聞與核心財務指標。")
 
 else:
-    stock_chinese_name = name_dict.get(selected_stock, "")
+    stock_chinese_name = stock_info_dict.get(selected_stock, {}).get('stock_name', '')
     display_title = f"{selected_stock} {stock_chinese_name}" if stock_chinese_name else selected_stock
     
     st.markdown(f"#### 🔍 {display_title} 深度戰情分析")
     
     with st.spinner("深度資料與基本面運算中..."):
-        df_price, divs_data, info_data = get_price_data(selected_stock)
+        df_price, divs_data = get_price_data(selected_stock)
         df_raw_inst = get_inst_data(selected_stock, start_date, end_date)
 
     if df_price.empty:
-        st.error("⚠️ 無法取得該股票資料，可能是代號錯誤，或是 Yahoo 伺服器暫時阻擋連線（Rate Limit），請稍等幾分鐘後再試。")
+        st.error("⚠️ 無法取得該股票資料，可能是代號錯誤，或是伺服器暫時阻擋連線，請稍等幾分鐘後再試。")
     else:
         df_price['MA_fast'] = df_price['Close'].rolling(window=ma_fast).mean()
         df_price['MA_slow'] = df_price['Close'].rolling(window=ma_slow).mean()
@@ -312,18 +313,20 @@ else:
         c3.metric("今日最低", f"${df_price['Low'].iloc[-1]:.2f}")
         c4.metric("成交張數", f"{int(df_price['Volume'].iloc[-1] / 1000):,} 張")
         
+        # --- 精準在地化基本面數據 ---
         b1, b2, b3, b4 = st.columns(4)
-        pe_ratio = info_data.get('trailingPE', 'N/A') if info_data else 'N/A'
-        eps = info_data.get('trailingEps', 'N/A') if info_data else 'N/A'
-        pb_ratio = info_data.get('priceToBook', 'N/A') if info_data else 'N/A'
-        sector = info_data.get('sector', 'N/A') if info_data else 'N/A'
+        pe_ratio, pb_ratio = get_fundamental_data(selected_stock)
+        sector = stock_info_dict.get(selected_stock, {}).get('industry_category', 'N/A')
+        
+        # 逆推精算 EPS (只有當本益比大於 0 時才計算)
+        eps = current_price / pe_ratio if isinstance(pe_ratio, (int, float)) and pe_ratio > 0 else 'N/A'
         
         pe_str = f"{pe_ratio:.2f} 倍" if isinstance(pe_ratio, (int, float)) else "N/A"
         eps_str = f"${eps:.2f}" if isinstance(eps, (int, float)) else "N/A"
         pb_str = f"{pb_ratio:.2f} 倍" if isinstance(pb_ratio, (int, float)) else "N/A"
 
         b1.metric("本益比 (P/E)", pe_str)
-        b2.metric("每股盈餘 (EPS)", eps_str)
+        b2.metric("每股盈餘 (EPS估)", eps_str)
         b3.metric("股價淨值比 (P/B)", pb_str)
         b4.metric("產業類別", str(sector))
         
