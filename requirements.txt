@@ -3,3 +3,4 @@ FinMind
 plotly
 tqdm
 pandas
+anyio<4.0.0
