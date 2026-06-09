@@ -55,10 +55,12 @@ st.markdown(
 
 api = DataLoader()
 
+# 修正 1：強制將 stock_id 轉為字串，徹底解決 2324 搜尋不到的 Bug
 @st.cache_data(ttl=86400) 
 def get_tw_stock_info():
     try:
         df_info = api.taiwan_stock_info()
+        df_info['stock_id'] = df_info['stock_id'].astype(str) 
         return df_info.set_index('stock_id').to_dict('index')
     except:
         return {}
@@ -66,7 +68,7 @@ def get_tw_stock_info():
 stock_info_dict = get_tw_stock_info()
 
 # ==========================================
-# 📌 側邊欄：控制台設定 (修復無限迴圈)
+# 📌 側邊欄：控制台設定
 # ==========================================
 if 'selected_stock' not in st.session_state: st.session_state.selected_stock = ''
 if 'search_box' not in st.session_state: st.session_state.search_box = ''
@@ -77,7 +79,7 @@ def select_stock(stock_id):
 
 st.sidebar.header("📌 戰情室控制台")
 
-st.sidebar.text_input("🔍 搜尋股票代號或名稱", key="search_box", placeholder="例如: 2330 或 中華電")
+st.sidebar.text_input("🔍 搜尋股票代號或名稱", key="search_box", placeholder="例如: 2330 或 仁寶")
 search_val = st.session_state.search_box.strip()
 
 if search_val:
@@ -109,7 +111,7 @@ if st.session_state.selected_stock:
 st.sidebar.button("🏠 回到戰情室首頁", on_click=select_stock, args=("",), use_container_width=True)
 
 st.sidebar.write("⚡ 常用自選股：")
-quick_stocks = ["0050", "2330", "2317", "00878", "00981A", "0056"]
+quick_stocks = ["0050", "2330", "2317", "2324", "00878", "0056"]
 cols = st.sidebar.columns(3)
 for i, stock in enumerate(quick_stocks):
     cols[i % 3].button(stock, on_click=select_stock, args=(stock,), key=f"qk_{stock}")
@@ -149,12 +151,14 @@ def get_price_data(stock_id):
         try:
             ticker = yf.Ticker(f"{stock_id}{suffix}")
             temp_df = ticker.history(period="5y")
+            # 修正 2：加入 .dropna(subset=['Close']) 剔除 NaN 幽靈數據
             if not temp_df.empty:
-                df = temp_df
-                df.index = df.index.tz_localize(None)
-                try: divs = ticker.dividends
-                except: pass
-                break 
+                df = temp_df.dropna(subset=['Close']).copy()
+                if not df.empty:
+                    df.index = df.index.tz_localize(None)
+                    try: divs = ticker.dividends
+                    except: pass
+                    break 
         except:
             continue
     return df, divs
@@ -194,41 +198,63 @@ def get_stock_news(query):
         return news
     except: return []
 
+# 修正 3：進階版 AI 分析引擎 (動態代入具體點位與獨特語氣)
 def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
-    if len(df) < 20: return "資料不足，無法進行深度解析。"
+    if len(df) < 20: return f"⚠️ {stock_name} 的歷史資料不足，無法進行深度的技術面與籌碼解析。"
     
-    close, ma_f_val, ma_s_val = df['Close'].iloc[-1], df['MA_fast'].iloc[-1], df['MA_slow'].iloc[-1]
-    rsi, macd_hist, macd_hist_prev = df['RSI'].iloc[-1], df['MACD_diff'].iloc[-1], df['MACD_diff'].iloc[-2]
+    close = df['Close'].iloc[-1]
+    ma_f_val, ma_s_val = df['MA_fast'].iloc[-1], df['MA_slow'].iloc[-1]
+    rsi = df['RSI'].iloc[-1]
+    macd_hist = df['MACD_diff'].iloc[-1]
+    macd_hist_prev = df['MACD_diff'].iloc[-2]
     
-    if close > ma_f_val > ma_s_val: trend = "均線多頭排列，多方控盤且下方支撐強勁。"
-    elif close < ma_f_val < ma_s_val: trend = "均線空頭排列，上檔反壓重，切勿貿然摸底進場。"
-    elif close > ma_s_val and close < ma_f_val: trend = "跌破短均線但守住長均線，屬高檔震盪整理階段。"
-    else: trend = "均線糾結無明顯方向，處於沉悶盤整，正醞釀表態。"
+    # 趨勢動態判斷
+    if close > ma_f_val > ma_s_val: 
+        trend = f"技術面展現強勢『多頭排列』，目前股價站穩 {f_ma} 日線之上。下方 {s_ma} 日線（約 ${ma_s_val:.2f}）已形成長線強力支撐。"
+    elif close < ma_f_val < ma_s_val: 
+        trend = f"目前線型落入『空頭排列』，上檔 {f_ma} 日線（約 ${ma_f_val:.2f}）形成沉重反壓，空方主導盤勢，尚未見到止跌訊號。"
+    elif close > ma_s_val and close < ma_f_val: 
+        trend = f"短期雖跌破 {f_ma} 日線（${ma_f_val:.2f}），但仍力守生命線（${ma_s_val:.2f}），屬於『高檔強勢震盪整理』，正在醞釀下一波表態。"
+    else: 
+        trend = f"均線呈現糾結狀態，目前股價在 ${close:.2f} 附近狹幅盤整，主力似乎還在觀望，缺乏明確的突破方向。"
 
-    if rsi >= 75: momentum = f"RSI 達超買區 ({rsi:.1f})，需提防高檔獲利了結賣壓。"
-    elif rsi <= 25: momentum = f"RSI 達超賣區 ({rsi:.1f})，短線上浮現跌深反彈契機。"
+    # 動能與 RSI 具體數值寫入
+    if rsi >= 80: momentum = f"特別注意，RSI 已狂飆至 {rsi:.1f} 的極度超買區，隨時可能湧現獲利了結賣壓！"
+    elif rsi >= 65: momentum = f"RSI 來到 {rsi:.1f} 的強勢區間，多頭動能依然充沛。"
+    elif rsi <= 25: momentum = f"RSI 嚴重超賣降至 {rsi:.1f}，短線上已浮現跌深反彈的黃金契機。"
+    elif rsi <= 40: momentum = f"指標顯示買氣疲弱 (RSI {rsi:.1f})，仍在弱勢探底。"
     else:
-        if macd_hist > 0 and macd_hist > macd_hist_prev: momentum = "MACD 紅柱放大，多方攻擊火種持續延燒。"
-        elif macd_hist < 0 and macd_hist < macd_hist_prev: momentum = "MACD 綠柱擴散，空方下殺動能增強，需提高風險意識。"
-        else: momentum = "MACD 動能表現溫和，缺乏明顯爆發力道。"
+        if macd_hist > 0 and macd_hist > macd_hist_prev: momentum = "搭配 MACD 紅柱持續放大，顯示多方攻擊的火種正在延燒。"
+        elif macd_hist < 0 and macd_hist < macd_hist_prev: momentum = "MACD 綠柱擴散，空方下殺動能有增強趨勢，需提高警覺。"
+        else: momentum = f"動能指標相對溫和 (RSI 處於 {rsi:.1f} 中性區)，爆發力道暫歇。"
 
-    inst_comment = "今日法人籌碼尚未更新，建議尾盤再做確認。"
+    # 籌碼動態判斷
+    inst_comment = "今日三大法人籌碼尚未結算更新，建議尾盤或盤後再做最後確認。"
     if not df_inst.empty and df.index[-1].strftime('%Y-%m-%d') in df_inst.index:
         today_inst = df_inst.loc[df.index[-1].strftime('%Y-%m-%d')]
         f_buy, t_buy, d_buy = today_inst.get('外資', 0), today_inst.get('投信', 0), today_inst.get('自營商', 0)
         total = f_buy + t_buy + d_buy
-        if f_buy > 0 and t_buy > 0: inst_comment = f"土洋聯手買超 {int(f_buy+t_buy):,} 張，大戶籌碼集中有利後續推升。"
-        elif f_buy < 0 and t_buy < 0: inst_comment = f"土洋同步賣超倒貨，大戶偏空操作，嚴防籌碼鬆動多殺多。"
-        elif total > 0: inst_comment = f"三大法人合計偏多操作，買超 {int(total):,} 張，以{'外資' if f_buy > t_buy else '投信'}撐盤為主。"
-        else: inst_comment = f"三大法人整體偏向提款，賣超 {abs(int(total)):,} 張，現階段法人心態保守。"
+        
+        if f_buy > 0 and t_buy > 0: 
+            inst_comment = f"籌碼面極佳！【土洋聯手做多】，外資與投信今日同步買超共 {int(f_buy+t_buy):,} 張，大戶籌碼高度集中，對後續推升極為有利。"
+        elif f_buy < 0 and t_buy < 0: 
+            inst_comment = f"警訊！【土洋無情雙殺】，外資與投信今日同步倒貨，大戶偏空操作，必須嚴防籌碼鬆動引發的多殺多。"
+        elif total > 0: 
+            main_buyer = '外資' if f_buy > t_buy else '投信'
+            inst_comment = f"三大法人合計偏多操作，買超 {int(total):,} 張，背後主要由『{main_buyer}』進場撐盤護盤。"
+        else: 
+            inst_comment = f"三大法人整體偏向提款，合計賣超 {abs(int(total)):,} 張，顯示法人大戶現階段操作心態相當保守。"
 
-    if close > ma_s_val: strategy = f"趨勢偏多，沿 {s_ma}日線操作，未跌破則續抱，空手者待量縮回測再佈局。"
-    else: strategy = "上方賣壓沉重，趨勢轉弱，建議多看少做現金為王，搶反彈需嚴格停損。"
+    # 策略加入具體價格位階
+    if close > ma_s_val: 
+        strategy = f"【順勢偏多】目前 {stock_name} 大趨勢依舊看好。建議以 ${ma_s_val:.2f} 作為波段防守底線，只要不跌破就持股續抱，讓獲利奔跑；空手者可等量縮回測時再找買點，切忌盲目追高。"
+    else: 
+        strategy = f"【風險控管】現階段上方賣壓沉重，趨勢明顯轉弱。強烈建議多看少做，現金為王；若手癢想搶短多反彈，必須嚴格把今天的低點當作停損防守線。"
 
-    disclaimer = "\n> ⚠️ **免責聲明**：AI 分析僅供參考，不構成買賣建議，投資請獨立判斷並自負盈虧。"
+    disclaimer = "\n> ⚠️ **免責聲明**：以上 AI 解析僅供歷史學術探討，不構成任何買賣推薦或投資建議，進場前請獨立思考並自負盈虧。"
 
     return (
-        f"* **💡 盤後重點速覽**：今天收盤 **${close:.2f}**。技術線型顯示：{trend} {momentum}\n"
+        f"* **💡 盤後重點速覽**：{stock_name} 今日收在 **${close:.2f}**。{trend} {momentum}\n"
         f"* **🕵️‍♂️ 籌碼追蹤動向**：{inst_comment}\n"
         f"* **🎯 AI 實戰操作建議**：{strategy}\n"
         f"{disclaimer}"
@@ -295,7 +321,6 @@ else:
         price_change = current_price - prev_close
         price_change_pct = (price_change / prev_close) * 100 if prev_close != 0 else 0
         
-        # --- ✅ 補回被我不小心刪掉的 get_ret 函數 ---
         def get_ret(m=0, y=0):
             if len(df_price) < 5: return None
             target = df_price.index[-1] - pd.DateOffset(months=m, years=y)
@@ -325,7 +350,7 @@ else:
         b4.metric("產業類別", str(sector))
         
         st.markdown("---")
-        st.success(generate_pro_analysis(df_price, df_inst_clean, display_title, ma_fast, ma_slow))
+        st.success(generate_pro_analysis(df_price, df_inst_clean, stock_chinese_name if stock_chinese_name else selected_stock, ma_fast, ma_slow))
 
         st.write(f"### 📈 互動技術線圖 ({timeframe})")
 
