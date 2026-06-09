@@ -9,76 +9,48 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
 import email.utils
+import base64
+import os
 
-# 網頁基本設定與 CSS 注入（精調上方留白、縮小數據字體與兩行間距）
+# 網頁基本設定與 CSS 注入
 st.set_page_config(page_title="StockVision 智能台股戰情室", layout="wide", page_icon="📈")
 
 st.markdown("""
     <style>
-    /* 1. 減少主頁最上方的預設留白，讓主標再往上移 */
-    .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 0rem !important;
-    }
-    [data-testid="stHeader"] {
-        background-color: rgba(0,0,0,0) !important;
-        height: 0px !important;
-    }
+    /* 減少主頁最上方的預設留白 */
+    .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
+    [data-testid="stHeader"] { background-color: rgba(0,0,0,0) !important; height: 0px !important; }
     
-    /* 2. 精調 st.metric 數據的字體大小，使其更精緻 */
-    [data-testid="stMetricValue"] {
-        font-size: 1.4rem !important;
-        font-weight: 700 !important;
-    }
-    [data-testid="stMetricLabel"] {
-        font-size: 0.85rem !important;
-    }
+    /* 數據字體與間距微調 */
+    [data-testid="stMetricValue"] { font-size: 1.4rem !important; font-weight: 700 !important; }
+    [data-testid="stMetricLabel"] { font-size: 0.85rem !important; }
+    [data-testid="stVerticalBlock"] > div { padding-bottom: 0.1rem !important; }
+    div[element-to-leaf="verticalblock"] > div { gap: 0.2rem !important; }
     
-    /* 3. 壓縮第一行與第二行數據指標之間的上下間距 */
-    [data-testid="stVerticalBlock"] > div {
-        padding-bottom: 0.1rem !important;
-    }
-    div[element-to-leaf="verticalblock"] > div {
-        gap: 0.2rem !important;
-    }
-    
-    /* 側邊欄控制樣式 */
-    [data-testid="collapsedControl"] {
-        background-color: #ff4b4b !important;
-        border-radius: 8px;
-        padding: 5px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        transition: 0.3s;
-    }
-    [data-testid="collapsedControl"] svg {
-        width: 28px !important;
-        height: 28px !important;
-        stroke: white !important;
-    }
-    [data-testid="collapsedControl"]:hover {
-        background-color: #ff3333 !important;
-    }
-    .landing-title {
-        font-size: 3rem;
-        font-weight: 800;
-        background: -webkit-linear-gradient(45deg, #ff4b4b, #ff904f);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 1rem;
-    }
+    /* 側邊欄控制按鈕 */
+    [data-testid="collapsedControl"] { background-color: #ff4b4b !important; border-radius: 8px; padding: 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: 0.3s; }
+    [data-testid="collapsedControl"] svg { width: 28px !important; height: 28px !important; stroke: white !important; }
+    [data-testid="collapsedControl"]:hover { background-color: #ff3333 !important; }
+    .landing-title { font-size: 3rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #ff4b4b, #ff904f); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 1rem; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🎨 主標題與品牌標誌 (Logo 並排版)
+# 🎨 標題與本機 Logo 自動讀取 (Base64 技術)
 # ==========================================
-# 修正為符合你 GitHub 真實檔名的 logo.png.jpg
-logo_url = "https://raw.githubusercontent.com/f0931215112/Streamlit_Stock/main/logo.png.jpg"
+def get_logo_html():
+    # 自動尋找資料夾內的 logo 檔案 (相容 jpg 與 png 命名)
+    for filename in ["logo.png.jpg", "logo.png"]:
+        if os.path.exists(filename):
+            with open(filename, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return f'<img src="data:image/jpeg;base64,{b64}" width="55" style="margin-right: 15px; border-radius: 50%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">'
+    return "📈" # 如果真的找不到檔案，顯示備用 Emoji
 
 st.markdown(
     f"""
     <div style="display: flex; align-items: center; margin-bottom: 0.8rem; margin-top: -10px;">
-        <img src="{logo_url}" width="55" style="margin-right: 15px; border-radius: 50%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+        {get_logo_html()}
         <h2 style="margin: 0; padding: 0; font-size: 2.2rem; font-weight: 800;">StockVision 智能台股戰情室</h2>
     </div>
     """,
@@ -98,27 +70,32 @@ def get_stock_names():
 name_dict = get_stock_names()
 
 # ==========================================
-# 📌 側邊欄：控制台設定
+# 📌 側邊欄：控制台設定 (修復按鈕無效 Bug)
 # ==========================================
-if 'selected_stock' not in st.session_state:
-    st.session_state.selected_stock = '' 
+# 初始化系統狀態
+if 'selected_stock' not in st.session_state: st.session_state.selected_stock = ''
+if 'search_box' not in st.session_state: st.session_state.search_box = ''
+
+# 建立點擊回呼函數：只要點按鈕，就強制作動並清空搜尋框，解除無限迴圈
+def select_stock(stock_id):
+    st.session_state.selected_stock = stock_id
+    st.session_state.search_box = "" 
 
 st.sidebar.header("📌 戰情室控制台")
 
-search_query = st.sidebar.text_input(
-    "🔍 搜尋股票代號或名稱", 
-    value="", 
-    placeholder="例如: 2330 或 中華電"
-)
+# 搜尋框與邏輯
+st.sidebar.text_input("🔍 搜尋股票代號或名稱", key="search_box", placeholder="例如: 2330 或 中華電")
+search_val = st.session_state.search_box.strip()
 
-if search_query:
-    query_clean = search_query.strip()
-    if query_clean in name_dict:
-        if st.session_state.selected_stock != query_clean:
-            st.session_state.selected_stock = query_clean
+if search_val:
+    if search_val in name_dict:
+        # 完全命中代號
+        if st.session_state.selected_stock != search_val:
+            st.session_state.selected_stock = search_val
             st.rerun()
     else:
-        matches = [sid for sid, name in name_dict.items() if query_clean in str(name) or query_clean in sid]
+        # 模糊搜尋
+        matches = [sid for sid, name in name_dict.items() if search_val in str(name) or search_val in sid]
         if matches:
             if len(matches) == 1:
                 if st.session_state.selected_stock != matches[0]:
@@ -127,28 +104,25 @@ if search_query:
             else:
                 st.sidebar.markdown("👉 **找到以下相關股票，請點擊檢視：**")
                 for sid in matches[:15]: 
-                    if st.sidebar.button(f"{sid} {name_dict[sid]}", use_container_width=True):
-                        st.session_state.selected_stock = sid
-                        st.rerun()
+                    # 綁定 Callback 函數
+                    st.sidebar.button(f"{sid} {name_dict[sid]}", on_click=select_stock, args=(sid,), key=f"btn_{sid}", use_container_width=True)
         else:
-            st.sidebar.error("❌ 找不到相符的股票，請重新輸入")
+            st.sidebar.error("❌ 找不到相符的股票")
 
 st.sidebar.markdown("---")
 
 if st.session_state.selected_stock:
     st.sidebar.success(f"目前檢視：{st.session_state.selected_stock} {name_dict.get(st.session_state.selected_stock, '')}")
 
-if st.sidebar.button("🏠 回到戰情室首頁", use_container_width=True):
-    st.session_state.selected_stock = ''
-    st.rerun()
+# 首頁按鈕也綁定 Callback
+st.sidebar.button("🏠 回到戰情室首頁", on_click=select_stock, args=("",), use_container_width=True)
 
 st.sidebar.write("⚡ 常用自選股：")
 quick_stocks = ["0050", "2330", "2317", "00878", "00981A", "0056"]
 cols = st.sidebar.columns(3)
 for i, stock in enumerate(quick_stocks):
-    if cols[i % 3].button(stock):
-        st.session_state.selected_stock = stock
-        st.rerun()
+    # 常用按鈕也綁定 Callback
+    cols[i % 3].button(stock, on_click=select_stock, args=(stock,), key=f"qk_{stock}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📊 均線參數設定")
@@ -159,17 +133,9 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("📅 圖表檢視區間")
 timeframe = st.sidebar.radio("選擇互動圖表範圍", ["近一月", "近三月", "近半年", "近一年", "近五年"])
 
-# 智慧警示服務 UI
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔔 智慧警示服務 (Beta)")
-st.sidebar.caption("綁定 LINE 接收主力籌碼異動通知")
-st.sidebar.text_input("輸入您的 Email 或 LINE ID", label_visibility="collapsed", placeholder="輸入 Email / LINE ID")
-if st.sidebar.button("免費開通推播", type="primary", use_container_width=True):
-    st.sidebar.success("✅ 設定成功！未來有重大籌碼異動將通知您。")
-
 st.sidebar.markdown("---")
 st.sidebar.subheader("☕ 支持開發者")
-st.sidebar.caption("如果這個戰情室幫您避開了大跌或抓到起漲點，歡迎請我喝杯咖啡！")
+st.sidebar.caption("如果這個戰情室幫您避開了大跌，歡迎請我喝杯咖啡！")
 bmc_html = """
 <div style="text-align: center; margin-top: 10px;">
     <a href="https://ko-fi.com/" target="_blank">
@@ -215,7 +181,8 @@ def get_stock_news(query):
     url = f"https://news.google.com/rss/search?q={quote(query)}+when:7d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response: xml_data = response.read()
+        # 加入 3 秒 Timeout，防止抓不到新聞時造成整個網頁卡死
+        with urllib.request.urlopen(req, timeout=3) as response: xml_data = response.read()
         root = ET.fromstring(xml_data)
         news = []
         for item in root.findall('./channel/item'):
@@ -229,7 +196,7 @@ def get_stock_news(query):
     except: return []
 
 # ==========================================
-# 🤖 專業投顧 AI 分析引擎
+# 🤖 專業投顧 AI 分析引擎 
 # ==========================================
 def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if len(df) < 20: return "資料不足，無法進行深度解析。"
@@ -272,7 +239,7 @@ def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     )
 
 # ==========================================
-# 🚀 畫面呈現 (首頁 Landing Page vs 戰情室)
+# 🚀 畫面呈現 
 # ==========================================
 if not selected_stock:
     st.markdown('<div class="landing-title">洞悉主力籌碼，精準打擊獲利。</div>', unsafe_allow_html=True)
@@ -327,7 +294,6 @@ else:
             for col in ['外資', '投信', '自營商']:
                 if col not in df_inst_clean.columns: df_inst_clean[col] = 0
 
-        # --- 💵 報價與基本面 (移除 if info_data 限制，確保欄位永不隱形) ---
         current_price = df_price['Close'].iloc[-1]
         prev_close = df_price['Close'].iloc[-2] if len(df_price) > 1 else current_price
         price_change = current_price - prev_close
@@ -340,14 +306,12 @@ else:
             if not past.empty: return ((current_price - past['Close'].iloc[0]) / past['Close'].iloc[0]) * 100
             return None
         
-        # 第一行資訊卡
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("最新收盤價", f"${current_price:.2f}", f"{price_change:+.2f} ({price_change_pct:+.2f}%)", delta_color="inverse")
         c2.metric("今日最高", f"${df_price['High'].iloc[-1]:.2f}")
         c3.metric("今日最低", f"${df_price['Low'].iloc[-1]:.2f}")
         c4.metric("成交張數", f"{int(df_price['Volume'].iloc[-1] / 1000):,} 張")
         
-        # 第二行資訊卡 (拔除限制，就算 info 漏抓也維持 N/A 排版不消失)
         b1, b2, b3, b4 = st.columns(4)
         pe_ratio = info_data.get('trailingPE', 'N/A') if info_data else 'N/A'
         eps = info_data.get('trailingEps', 'N/A') if info_data else 'N/A'
@@ -366,7 +330,6 @@ else:
         st.markdown("---")
         st.success(generate_pro_analysis(df_price, df_inst_clean, display_title, ma_fast, ma_slow))
 
-        # --- 📈 互動技術線圖 ---
         st.write(f"### 📈 互動技術線圖 ({timeframe})")
 
         if timeframe == "近一月": start_dt, period_ret = df_price.index[-1] - pd.DateOffset(months=1), get_ret(m=1)
@@ -390,7 +353,6 @@ else:
         fig.update_layout(xaxis_rangeslider_visible=False, height=500, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 👥 法人買賣超 ---
         st.write("### 👥 每日三大法人買賣超明細（張）")
         if not df_inst_clean.empty:
             plot_inst = df_inst_clean.tail(30)
@@ -402,7 +364,6 @@ else:
         else:
             st.warning("⚠️ 籌碼資料處理失敗，或今日資料尚未更新。")
 
-        # --- 💰 配息與 📰 新聞 ---
         st.markdown("---")
         col_left, col_right = st.columns([1, 1.5]) 
 
