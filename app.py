@@ -10,8 +10,31 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 import email.utils
 
-# 網頁基本設定
+# 網頁基本設定與 CSS 注入 (優化手機版按鈕與字體)
 st.set_page_config(page_title="我的專屬持股即時監控面板", layout="wide")
+
+# 注入自訂 CSS 來美化手機版的左上角展開按鈕
+st.markdown("""
+    <style>
+    /* 放大並突顯左上角的側邊欄展開按鈕 */
+    [data-testid="collapsedControl"] {
+        background-color: #ff4b4b !important;
+        border-radius: 8px;
+        padding: 5px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        transition: 0.3s;
+    }
+    [data-testid="collapsedControl"] svg {
+        width: 28px !important;
+        height: 28px !important;
+        stroke: white !important;
+    }
+    [data-testid="collapsedControl"]:hover {
+        background-color: #ff3333 !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("📈 我的專屬持股即時監控面板")
 
 api = DataLoader()
@@ -46,7 +69,6 @@ st.sidebar.write("⚡ 常用自選股：")
 quick_stocks = ["0050", "2330", "2317", "00878", "00981A", "0056"]
 cols = st.sidebar.columns(3)
 for i, stock in enumerate(quick_stocks):
-    # 利用 i % 3 讓按鈕自動折行排列
     if cols[i % 3].button(stock):
         st.session_state.selected_stock = stock
         st.rerun()
@@ -206,7 +228,8 @@ if selected_stock:
         
         st.write("### 💵 即時股價重點")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("最新收盤價", f"${current_price:.2f}", f"{price_change:+.2f} ({price_change_pct:+.2f}%)")
+        # delta_color="inverse" 讓系統自動變成紅漲綠跌
+        c1.metric("最新收盤價", f"${current_price:.2f}", f"{price_change:+.2f} ({price_change_pct:+.2f}%)", delta_color="inverse")
         c2.metric("今日最高", f"${df_price['High'].iloc[-1]:.2f}")
         c3.metric("今日最低", f"${df_price['Low'].iloc[-1]:.2f}")
         c4.metric("成交張數", f"{int(df_price['Volume'].iloc[-1] / 1000):,} 張")
@@ -258,10 +281,10 @@ if selected_stock:
             st.warning("⚠️ 籌碼資料處理失敗，或今日資料尚未更新。")
 
         # ==========================================
-        # 💰 配息與 📰 新聞 (左右雙欄設計)
+        # 💰 配息與 📰 新聞 (非對稱雙欄設計，圖表 40%，新聞 60%)
         # ==========================================
         st.markdown("---")
-        col_left, col_right = st.columns(2)
+        col_left, col_right = st.columns([1, 1.5]) # 調整比例讓圖表變窄
 
         with col_left:
             st.write("### 💰 歷年配息與殖利率")
@@ -275,18 +298,21 @@ if selected_stock:
                     latest_div = annual_div['cash_dividend'].iloc[-1]
                     avg_div = annual_div['cash_dividend'].mean()
                     
-                    c_y1, c_y2 = st.columns(2)
-                    c_y1.metric(f"{annual_div['year'].iloc[-1]}年 股利", f"${latest_div:.2f}", f"殖利率估算: {(latest_div/current_price)*100:.2f}%", delta_color="normal")
-                    c_y2.metric("近五年平均", f"${avg_div:.2f}", f"殖利率估算: {(avg_div/current_price)*100:.2f}%", delta_color="normal")
+                    st.markdown(f"**{annual_div['year'].iloc[-1]}年 股利:** `${latest_div:.2f}` (殖利率: **{(latest_div/current_price)*100:.2f}%**)")
+                    st.markdown(f"**近五年平均:** `${avg_div:.2f}` (平均殖利率: **{(avg_div/current_price)*100:.2f}%**)")
                     
+                    # 換成暖金橘色的柱狀圖，並縮減圖表高度與間距
                     fig_div = gr.Figure(gr.Bar(
-                        x=annual_div['year'].astype(str) + "年", y=annual_div['cash_dividend'],
-                        text=annual_div['cash_dividend'].apply(lambda x: f"${x:.2f}"), textposition='auto', marker_color='#1f77b4'
+                        x=annual_div['year'].astype(str) + "年", 
+                        y=annual_div['cash_dividend'],
+                        text=annual_div['cash_dividend'].apply(lambda x: f"${x:.2f}"), 
+                        textposition='auto', 
+                        marker_color='#e67e22' # 暖金橘色
                     ))
-                    fig_div.update_layout(height=280, template="plotly_white", margin=dict(l=0, r=0, t=20, b=0), yaxis_title="現金股利 (元)")
+                    fig_div.update_layout(height=280, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), bargap=0.3, yaxis_title="現金股利 (元)")
                     st.plotly_chart(fig_div, use_container_width=True)
                 else:
-                    st.info("查無近五年現金股利資料（或該股不配息）。")
+                    st.info("查無近五年現金股利資料。")
             else:
                 st.info("此檔股票無歷史配息紀錄。")
 
@@ -296,7 +322,7 @@ if selected_stock:
             
             if news_list:
                 for item in news_list:
-                    with st.expander(f"📌 {item['title']}"):
+                    with st.expander(f"📌 {item['title']}", expanded=True): # 預設展開讓畫面更豐富
                         st.write(f"🕒 發布時間：{item['date_str']}")
                         st.markdown(f"[🔗 點擊前往閱讀完整新聞內容]({item['link']})")
             else:
