@@ -56,43 +56,54 @@ def get_stock_names():
 name_dict = get_stock_names()
 
 # ==========================================
-# 📌 側邊欄：一體化智慧選股控制台
+# 📌 側邊欄：直覺化文字搜尋與控制台
 # ==========================================
 if 'selected_stock' not in st.session_state:
     st.session_state.selected_stock = '' 
 
 st.sidebar.header("📌 戰情室控制台")
 
-# 1. 智慧下拉搜尋選單 (支援中文與代號模糊搜尋)
-options_list = [f"{sid} {name}" for sid, name in name_dict.items()]
-default_idx = None
-
-# 判斷目前選中的股票在哪個 index，讓選單保持同步
-if st.session_state.selected_stock:
-    for i, opt in enumerate(options_list):
-        if opt.startswith(st.session_state.selected_stock):
-            default_idx = i
-            break
-
-selected_opt = st.sidebar.selectbox(
-    "🔍 搜尋股票代號或名稱",
-    options=options_list,
-    index=default_idx,
-    placeholder="輸入代號或關鍵字 (如: 元大)"
+# 1. 改善 UX 的單純文字搜尋框
+search_query = st.sidebar.text_input(
+    "🔍 搜尋股票代號或名稱", 
+    value="", 
+    placeholder="例如: 2330 或 中華電"
 )
 
-# 處理搜尋框變動
-if selected_opt:
-    new_stock = selected_opt.split(" ")[0]
-    if new_stock != st.session_state.selected_stock:
-        st.session_state.selected_stock = new_stock
-        st.rerun()
-elif st.session_state.selected_stock != "":
-    # 如果使用者把搜尋框清空，直接跳回首頁
-    st.session_state.selected_stock = ""
-    st.rerun()
+# 處理搜尋與按鈕呈現邏輯
+if search_query:
+    query_clean = search_query.strip()
+    # 如果輸入完全符合代號，直接切換
+    if query_clean in name_dict:
+        if st.session_state.selected_stock != query_clean:
+            st.session_state.selected_stock = query_clean
+            st.rerun()
+    else:
+        # 模糊搜尋名稱或代號
+        matches = [sid for sid, name in name_dict.items() if query_clean in str(name) or query_clean in sid]
+        
+        if matches:
+            if len(matches) == 1:
+                # 只有一檔符合，自動切換
+                if st.session_state.selected_stock != matches[0]:
+                    st.session_state.selected_stock = matches[0]
+                    st.rerun()
+            else:
+                # 有多檔符合，直接在輸入框下方產生按鈕清單讓使用者點擊
+                st.sidebar.markdown("👉 **找到以下相關股票，請點擊檢視：**")
+                for sid in matches[:15]: # 最多顯示 15 檔避免洗版
+                    if st.sidebar.button(f"{sid} {name_dict[sid]}", use_container_width=True):
+                        st.session_state.selected_stock = sid
+                        st.rerun()
+        else:
+            st.sidebar.error("❌ 找不到相符的股票，請重新輸入")
 
-# 2. 回首頁按鈕
+st.sidebar.markdown("---")
+
+# 2. 目前檢視狀態與回首頁
+if st.session_state.selected_stock:
+    st.sidebar.success(f"目前檢視：{st.session_state.selected_stock} {name_dict.get(st.session_state.selected_stock, '')}")
+
 if st.sidebar.button("🏠 回到戰情室首頁", use_container_width=True):
     st.session_state.selected_stock = ''
     st.rerun()
@@ -186,7 +197,7 @@ def get_stock_news(query):
     except: return []
 
 # ==========================================
-# 🤖 專業投顧 AI 分析引擎
+# 🤖 專業投顧 AI 分析引擎 (含免責聲明)
 # ==========================================
 def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if len(df) < 20: return "資料不足，無法進行深度解析。"
@@ -219,10 +230,14 @@ def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if close > ma_s_val: strategy = f"目前大趨勢依舊站在多方，建議可以沿著 {s_ma}日線 (${ma_s_val:.2f}) 偏多操作。只要不跌破，持股續抱讓獲利奔跑；空手者可等量縮回測均線時再找買點，切忌盲目追高。"
     else: strategy = "現在上方重重套牢賣壓，趨勢明顯轉弱。強烈建議多看少做，『現金為王』。若真的手癢想搶反彈，手腳一定要快，並嚴格把今天低點當作停損防守線。"
 
+    # 加入具有法律保護效益的免責聲明
+    disclaimer = "\n\n---\n> ⚠️ **免責聲明**：本系統分析結果由 AI 模型輔助生成，籌碼與技術指標僅供學術探討與歷史數據回測參考，**不構成任何買賣推薦或投資建議**。股市瞬息萬變，投資必有風險，操作前請獨立判斷並自負盈虧。"
+
     return (
         f"* **💡 盤後重點速覽**：今天 {stock_name} 收在 **${close:.2f}**。就技術線型來看，{trend} {momentum}\n"
         f"* **🕵️‍♂️ 籌碼追蹤**：{inst_comment}\n"
         f"* **🎯 AI 分析師實戰建議**：{strategy}"
+        f"{disclaimer}"
     )
 
 # ==========================================
@@ -291,7 +306,6 @@ else:
         price_change = current_price - prev_close
         price_change_pct = (price_change / prev_close) * 100 if prev_close != 0 else 0
         
-        # ⚠️ 補回上次不小心刪掉的 get_ret 函數
         def get_ret(m=0, y=0):
             if len(df_price) < 5: return None
             target = df_price.index[-1] - pd.DateOffset(months=m, years=y)
@@ -360,7 +374,7 @@ else:
         else:
             st.warning("⚠️ 籌碼資料處理失敗，或今日資料尚未更新。")
 
-        # --- 💰 配息與 📰 新聞 ---
+        # --- 💰 配息與 📰 新聞 (左右雙欄) ---
         st.markdown("---")
         col_left, col_right = st.columns([1, 1.5]) 
 
