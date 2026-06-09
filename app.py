@@ -17,7 +17,7 @@ st.sidebar.header("📌 持股設定與參數")
 # 這裡你完全可以直接輸入純數字代號（例如 2330, 2454）
 my_stocks = st.sidebar.text_input(
     "輸入自選股代號（用逗號分隔）", 
-    value="2330, 00923, 0050, 00713, 00878, 00981A"
+    value="2330, 00923, 0050, 00713, 00878"
 )
 stock_list = [s.strip() for s in my_stocks.split(",")]
 
