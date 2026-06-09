@@ -207,4 +207,5 @@ if stock_list:
         loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
         df_plot['RSI'] = 100 - (100 / (1 + (gain / loss)))
 
-        exp1 = df_plot['Close'].ewm(span=12, adjust=False
+        exp1 = df_plot['Close'].ewm(span=12, adjust=False).mean()
+        exp2 = df_plot['Close'].ewm(span=26, adjust=False).mean()
