@@ -101,16 +101,22 @@ if stock_list:
     st.subheader(f"🔍 {display_title} 全方位盤態分析")
     
     # 抓取 5 年資料以計算長線報酬
+    # 修正重點：只回傳純資料 (df, divs)，不回傳 ticker 物件，避開 Serialization Error
     @st.cache_data(ttl=300) 
     def get_price_data(stock_id):
         ticker = yf.Ticker(f"{stock_id}.TW")
         df = ticker.history(period="5y")
+        divs = pd.Series(dtype='float64')
         if df.empty:
             ticker = yf.Ticker(f"{stock_id}.TWO")
             df = ticker.history(period="5y")
         if not df.empty:
             df.index = df.index.tz_localize(None) 
-        return df, ticker
+            try:
+                divs = ticker.dividends
+            except:
+                pass
+        return df, divs
 
     @st.cache_data(ttl=300)
     def get_inst_data(stock_id, start, end):
@@ -120,7 +126,7 @@ if stock_list:
             return pd.DataFrame()
 
     with st.spinner("深度資料運算中..."):
-        df_price, ticker_obj = get_price_data(selected_stock)
+        df_price, divs_data = get_price_data(selected_stock)
         df_raw_inst = get_inst_data(selected_stock, start_date, end_date)
 
     if df_price.empty:
@@ -161,7 +167,7 @@ if stock_list:
         c3.metric("今日最低", f"${df_price['Low'].iloc[-1]:.2f}")
         c4.metric("成交張數", f"{int(df_price['Volume'].iloc[-1] / 1000):,} 張")
         
-        # 計算歷史報酬率 (1個月約21個交易日)
+        # 計算歷史報酬率
         returns = {}
         for label, days in [("近一月", 21), ("近三月", 63), ("近半年", 126), ("近一年", 252), ("近五年", 1260)]:
             if len(df_price) > days:
@@ -184,16 +190,12 @@ if stock_list:
         # 💰 除權息資訊
         # ==========================================
         st.write("### 💰 近期配息資訊")
-        try:
-            divs = ticker_obj.dividends
-            if not divs.empty:
-                recent_divs = divs.tail(3).sort_index(ascending=False)
-                div_str = " | ".join([f"**{date.strftime('%Y-%m-%d')}** 除息 **${amt:.2f}**" for date, amt in recent_divs.items()])
-                st.info(f"📅 最新配息紀錄：{div_str}")
-            else:
-                st.write("無近期配息紀錄，或此檔股票無配息。")
-        except:
-            st.write("無法取得除權息資訊。")
+        if not divs_data.empty:
+            recent_divs = divs_data.tail(3).sort_index(ascending=False)
+            div_str = " | ".join([f"**{date.strftime('%Y-%m-%d')}** 除息 **${amt:.2f}**" for date, amt in recent_divs.items()])
+            st.info(f"📅 最新配息紀錄：{div_str}")
+        else:
+            st.write("無近期配息紀錄，或此檔股票無配息。")
 
         st.markdown("---")
 
@@ -209,3 +211,56 @@ if stock_list:
 
         exp1 = df_plot['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df_plot['Close'].ewm(span=26, adjust=False).mean()
+        df_plot['MACD'] = exp1 - exp2
+        df_plot['MACD_signal'] = df_plot['MACD'].ewm(span=9, adjust=False).mean()
+        df_plot['MACD_diff'] = df_plot['MACD'] - df_plot['MACD_signal']
+
+        # ==========================================
+        # 🤖 智能投顧解析區塊
+        # ==========================================
+        st.success(generate_pro_analysis(df_plot, df_inst_clean, display_title, ma_fast, ma_slow))
+
+        # ==========================================
+        # 📈 1. 繪製主 K 線圖 + 成交量 Bar (Subplots)
+        # ==========================================
+        st.subheader("📈 主圖：K 線與成交量")
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+        
+        # 上半部：K線與均線
+        fig.add_trace(gr.Candlestick(
+            x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'],
+            name='K線', increasing=dict(line=dict(color='#ff3333'), fillcolor='#ff3333'), decreasing=dict(line=dict(color='#00b33c'), fillcolor='#00b33c')
+        ), row=1, col=1)
+        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot['MA_fast'], mode='lines', name=f'{ma_fast}MA', line=dict(width=1.5, color='orange')), row=1, col=1)
+        fig.add_trace(gr.Scatter(x=df_plot.index, y=df_plot['MA_slow'], mode='lines', name=f'{ma_slow}MA', line=dict(width=1.5, color='blue')), row=1, col=1)
+        
+        # 下半部：成交量
+        colors_vol = ['#ff3333' if df_plot['Close'].iloc[i] > df_plot['Open'].iloc[i] else '#00b33c' for i in range(len(df_plot))]
+        fig.add_trace(gr.Bar(x=df_plot.index, y=df_plot['Volume'], marker_color=colors_vol, name='成交股數'), row=2, col=1)
+        
+        fig.update_layout(xaxis_rangeslider_visible=False, height=600, template="plotly_white", margin=dict(l=0, r=0, t=30, b=0))
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ==========================================
+        # 👥 三大法人買賣超
+        # ==========================================
+        st.subheader("👥 每日三大法人買賣超明細（張）")
+        
+        with st.expander("🛠️ 展開查看 FinMind 原始籌碼數據"):
+            if not df_raw_inst.empty: st.dataframe(df_raw_inst.tail(15))
+            else: st.write("無原始資料")
+
+        if not df_inst_clean.empty:
+            plot_inst = df_inst_clean.tail(30)
+            fig_inst = gr.Figure()
+            inst_colors = {'外資': 'red', '投信': '#ff9900', '自營商': 'blue'}
+            for col in ['外資', '投信', '自營商']:
+                fig_inst.add_trace(gr.Bar(x=plot_inst.index, y=plot_inst[col], name=col, marker_color=inst_colors[col]))
+            
+            fig_inst.update_layout(barmode='group', height=350, template="plotly_white", margin=dict(l=0, r=0, t=30, b=0))
+            st.plotly_chart(fig_inst, use_container_width=True)
+        else:
+            st.warning("⚠️ 籌碼資料處理失敗，或今日資料尚未更新。")
+
+else:
+    st.warning("請在側邊欄輸入至少一檔股票代號。")
