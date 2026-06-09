@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import urllib.request
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
+import email.utils
 
 # 網頁基本設定
 st.set_page_config(page_title="我的專屬持股即時監控面板", layout="wide")
@@ -27,7 +28,7 @@ def get_stock_names():
 name_dict = get_stock_names()
 
 # ==========================================
-# 📌 側邊欄：一體化選股與快捷按鍵 (Session State)
+# 📌 側邊欄：一體化選股與快捷按鍵
 # ==========================================
 if 'selected_stock' not in st.session_state:
     st.session_state.selected_stock = '0050'
@@ -42,10 +43,10 @@ if user_input != st.session_state.selected_stock:
 
 # 2. 常用股票快捷鍵
 st.sidebar.write("⚡ 常用自選股：")
-quick_stocks = ["2330", "0050", "00923", "00713", "4770", "00878"]
+quick_stocks = ["0050", "2330", "2317"]
 cols = st.sidebar.columns(3)
 for i, stock in enumerate(quick_stocks):
-    if cols[i%3].button(stock):
+    if cols[i].button(stock):
         st.session_state.selected_stock = stock
         st.rerun()
 
@@ -54,12 +55,16 @@ st.sidebar.subheader("📊 均線參數")
 ma_fast = st.sidebar.number_input("快均線 (MA)", min_value=5, max_value=60, value=5)
 ma_slow = st.sidebar.number_input("慢均線 (MA)", min_value=10, max_value=240, value=20)
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("📅 圖表檢視區間")
+timeframe = st.sidebar.radio("選擇互動圖表範圍", ["近一月", "近三月", "近半年", "近一年", "近五年"])
+
 end_date = datetime.today().strftime('%Y-%m-%d')
 start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
 selected_stock = st.session_state.selected_stock
 
 # ==========================================
-# 🤖 專業投顧 AI 分析引擎
+# 🤖 專業投顧 AI 分析引擎 (對齊排版版)
 # ==========================================
 def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if len(df) < 20: return "資料不足，無法進行深度解析。"
@@ -101,7 +106,12 @@ def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if close > ma_s_val: strategy = f"目前大趨勢依舊站在多方，建議可以沿著 {s_ma}日線 (${ma_s_val:.2f}) 偏多操作。只要不跌破，持股續抱讓獲利奔跑；空手者可等量縮回測均線時再找買點，切忌盲目追高。"
     else: strategy = "現在上方重重套牢賣壓，趨勢明顯轉弱。強烈建議多看少做，『現金為王』。若真的手癢想搶反彈，手腳一定要快，並嚴格把今天低點當作停損防守線。"
 
-    return f"**💡 盤後重點速覽：** 今天 {stock_name} 收在 **${close:.2f}**。就技術線型來看，{trend} {momentum}\n\n**🕵️‍♂️ 籌碼追蹤：** {inst_comment}\n\n**🎯 AI 分析師實戰建議：** {strategy}"
+    # 使用 Markdown 項目符號確保多行文字能完美縮排對齊
+    return (
+        f"* **💡 盤後重點速覽**：今天 {stock_name} 收在 **${close:.2f}**。就技術線型來看，{trend} {momentum}\n"
+        f"* **🕵️‍♂️ 籌碼追蹤**：{inst_comment}\n"
+        f"* **🎯 AI 分析師實戰建議**：{strategy}"
+    )
 
 # ==========================================
 # 📊 抓取資料模組
@@ -110,38 +120,44 @@ def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
 def get_price_data(stock_id):
     ticker = yf.Ticker(f"{stock_id}.TW")
     df = ticker.history(period="5y")
+    divs = pd.Series(dtype='float64')
     if df.empty:
         ticker = yf.Ticker(f"{stock_id}.TWO")
         df = ticker.history(period="5y")
-    if not df.empty: df.index = df.index.tz_localize(None) 
-    return df
+    if not df.empty: 
+        df.index = df.index.tz_localize(None)
+        try: divs = ticker.dividends
+        except: pass
+    return df, divs
 
 @st.cache_data(ttl=300)
 def get_inst_data(stock_id, start, end):
     try: return api.taiwan_stock_institutional_investors(stock_id=stock_id, start_date=start, end_date=end)
     except: return pd.DataFrame()
 
-# 精準 FinMind 歷年股利
-@st.cache_data(ttl=86400)
-def get_dividend_data(stock_id):
-    try:
-        start_yr = datetime.today().year - 6 # 取多一年確保 5 個完整年度
-        return api.taiwan_stock_dividend(stock_id=stock_id, start_date=f"{start_yr}-01-01")
-    except:
-        return pd.DataFrame()
-
-# 內建爬蟲抓取 Google 即時新聞 (不需新套件)
+# 精準 Google 即時新聞 (以發布時間排序)
 @st.cache_data(ttl=1800)
 def get_stock_news(query):
-    url = f"https://news.google.com/rss/search?q={quote(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    # 搜尋條件加入 when:7d 確保不會抓到太舊的新聞
+    url = f"https://news.google.com/rss/search?q={quote(query)}+when:7d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
             xml_data = response.read()
         root = ET.fromstring(xml_data)
         news = []
-        for item in root.findall('./channel/item')[:3]:
-            news.append({'title': item.find('title').text, 'link': item.find('link').text, 'date': item.find('pubDate').text})
+        for item in root.findall('./channel/item'):
+            title = item.find('title').text
+            link = item.find('link').text
+            pub_date_str = item.find('pubDate').text
+            # 將 RSS 時間轉為真實 datetime 物件
+            pub_date = email.utils.parsedate_to_datetime(pub_date_str)
+            news.append({'title': title, 'link': link, 'date': pub_date})
+        
+        # 依日期由新到舊排序，取前 3 則
+        news = sorted(news, key=lambda x: x['date'], reverse=True)[:3]
+        for n in news:
+            n['date_str'] = n['date'].strftime('%Y-%m-%d %H:%M') # 格式化時間
         return news
     except:
         return []
@@ -156,9 +172,8 @@ if selected_stock:
     st.subheader(f"🔍 {display_title} 全方位盤態分析")
     
     with st.spinner("深度資料運算中..."):
-        df_price = get_price_data(selected_stock)
+        df_price, divs_data = get_price_data(selected_stock)
         df_raw_inst = get_inst_data(selected_stock, start_date, end_date)
-        df_div = get_dividend_data(selected_stock)
 
     if df_price.empty:
         st.error("找不到該股票的歷史價格，請確認代號是否正確。")
@@ -191,67 +206,61 @@ if selected_stock:
             for col in ['外資', '投信', '自營商']:
                 if col not in df_inst_clean.columns: df_inst_clean[col] = 0
 
-        # --- 💵 即時股價與歷史獲利 ---
+        # --- 💵 即時股價 (移除報酬率行列) ---
         current_price = df_price['Close'].iloc[-1]
         prev_close = df_price['Close'].iloc[-2] if len(df_price) > 1 else current_price
         price_change = current_price - prev_close
         price_change_pct = (price_change / prev_close) * 100 if prev_close != 0 else 0
         
-        st.write("### 💵 即時股價與歷史獲利表現")
+        st.write("### 💵 即時股價重點")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("最新收盤價", f"${current_price:.2f}", f"{price_change:+.2f} ({price_change_pct:+.2f}%)")
         c2.metric("今日最高", f"${df_price['High'].iloc[-1]:.2f}")
         c3.metric("今日最低", f"${df_price['Low'].iloc[-1]:.2f}")
         c4.metric("成交張數", f"{int(df_price['Volume'].iloc[-1] / 1000):,} 張")
         
-        def get_ret(m=0, y=0):
-            if len(df_price) < 5: return None
-            target = df_price.index[-1] - pd.DateOffset(months=m, years=y)
-            past = df_price[df_price.index >= target]
-            if not past.empty: return ((current_price - past['Close'].iloc[0]) / past['Close'].iloc[0]) * 100
-            return None
-
-        r1, r2, r3, r4, r5 = st.columns(5)
-        r1.metric("近一月報酬", f"{get_ret(m=1):+.2f}%" if get_ret(m=1) is not None else "上市未滿")
-        r2.metric("近三月報酬", f"{get_ret(m=3):+.2f}%" if get_ret(m=3) is not None else "上市未滿")
-        r3.metric("近半年報酬", f"{get_ret(m=6):+.2f}%" if get_ret(m=6) is not None else "上市未滿")
-        r4.metric("近一年報酬", f"{get_ret(y=1):+.2f}%" if get_ret(y=1) is not None else "上市未滿")
-        r5.metric("近五年報酬", f"{get_ret(y=5):+.2f}%" if get_ret(y=5) is not None else "上市未滿")
-        
         st.markdown("---")
 
-        # --- 💰 近 5 年配息圖表與殖利率試算 ---
+        # --- 💰 近 5 年配息圖表與殖利率試算 (改用可靠的 yfinance 資料) ---
         st.write("### 💰 歷年配息與殖利率 (以現價試算)")
-        if not df_div.empty and 'cash_dividend' in df_div.columns:
-            df_div['year'] = pd.to_datetime(df_div['date']).dt.year
-            annual_div = df_div.groupby('year')['cash_dividend'].sum().reset_index()
-            annual_div = annual_div[annual_div['cash_dividend'] > 0].tail(5) # 取近5年有配息的資料
+        if not divs_data.empty:
+            divs_df = pd.DataFrame({'date': divs_data.index, 'cash_dividend': divs_data.values})
+            divs_df['year'] = pd.to_datetime(divs_df['date']).dt.year
+            annual_div = divs_df.groupby('year')['cash_dividend'].sum().reset_index()
+            # 排除 0 元與當前年份若尚未配完的極端小值，取最近5年
+            annual_div = annual_div[annual_div['cash_dividend'] > 0].tail(5) 
             
             if not annual_div.empty:
                 latest_div = annual_div['cash_dividend'].iloc[-1]
                 avg_div = annual_div['cash_dividend'].mean()
                 
                 c_y1, c_y2 = st.columns(2)
-                c_y1.metric(f"{annual_div['year'].iloc[-1]}年 現金股利", f"${latest_div:.2f}", f"當前殖利率估算: {(latest_div/current_price)*100:.2f}%", delta_color="normal")
+                c_y1.metric(f"{annual_div['year'].iloc[-1]}年度 現金股利", f"${latest_div:.2f}", f"當前殖利率估算: {(latest_div/current_price)*100:.2f}%", delta_color="normal")
                 c_y2.metric("近五年 平均股利", f"${avg_div:.2f}", f"平均殖利率估算: {(avg_div/current_price)*100:.2f}%", delta_color="normal")
                 
                 fig_div = gr.Figure(gr.Bar(
                     x=annual_div['year'].astype(str) + "年", y=annual_div['cash_dividend'],
                     text=annual_div['cash_dividend'].apply(lambda x: f"${x:.2f}"), textposition='auto', marker_color='#1f77b4'
                 ))
-                fig_div.update_layout(height=250, template="plotly_white", margin=dict(l=0, r=0, t=30, b=0), yaxis_title="現金股利 (元)")
+                fig_div.update_layout(height=250, template="plotly_white", margin=dict(l=0, r=0, t=30, b=0), yaxis_title="年度現金股利 (元)")
                 st.plotly_chart(fig_div, use_container_width=True)
             else:
                 st.info("查無近五年現金股利資料（或該股不配息）。")
         else:
-            st.info("查無配息資料，請稍後再試。")
+            st.info("此檔股票無歷史配息紀錄。")
 
         st.markdown("---")
         st.success(generate_pro_analysis(df_price, df_inst_clean, display_title, ma_fast, ma_slow))
 
-        # --- 📈 互動技術線圖 ---
-        st.write("### 📈 互動技術線圖與期間報酬")
-        timeframe = st.radio("選擇圖表檢視區間", ["近一月", "近三月", "近半年", "近一年", "近五年"], horizontal=True)
+        # --- 📈 互動技術線圖 (單一報酬率) ---
+        st.write(f"### 📈 互動技術線圖 ({timeframe})")
+
+        def get_ret(m=0, y=0):
+            if len(df_price) < 5: return None
+            target = df_price.index[-1] - pd.DateOffset(months=m, years=y)
+            past = df_price[df_price.index >= target]
+            if not past.empty: return ((current_price - past['Close'].iloc[0]) / past['Close'].iloc[0]) * 100
+            return None
 
         if timeframe == "近一月": start_dt, period_ret = df_price.index[-1] - pd.DateOffset(months=1), get_ret(m=1)
         elif timeframe == "近三月": start_dt, period_ret = df_price.index[-1] - pd.DateOffset(months=3), get_ret(m=3)
@@ -262,7 +271,7 @@ if selected_stock:
         df_plot = df_price[df_price.index >= start_dt].copy()
 
         if period_ret is not None:
-            st.markdown(f"**🎯 該區間獲利表現：** :{'red' if period_ret > 0 else 'green'}[**{period_ret:+.2f}%**]")
+            st.markdown(f"**🎯 {timeframe} 獲利表現：** :{'red' if period_ret > 0 else 'green'}[**{period_ret:+.2f}%**]")
         
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
         fig.add_trace(gr.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name='K線', increasing=dict(line=dict(color='#ff3333'), fillcolor='#ff3333'), decreasing=dict(line=dict(color='#00b33c'), fillcolor='#00b33c')), row=1, col=1)
@@ -287,17 +296,16 @@ if selected_stock:
             st.warning("⚠️ 籌碼資料處理失敗，或今日資料尚未更新。")
 
         # ==========================================
-        # 📰 專屬即時新聞區塊
+        # 📰 專屬即時新聞區塊 (按時間最新排序)
         # ==========================================
         st.markdown("---")
-        st.write("### 📰 相關即時新聞")
-        news_list = get_stock_news(f"{display_title} 股市")
+        st.write(f"### 📰 {display_title} 相關即時新聞")
+        news_list = get_stock_news(f"{stock_chinese_name} 股市")
         
         if news_list:
             for item in news_list:
-                # 使用 Expander 折疊模塊呈現新聞摘要
                 with st.expander(f"📌 {item['title']}"):
-                    st.write(f"🕒 發布時間：{item['date']}")
+                    st.write(f"🕒 發布時間：{item['date_str']}")
                     st.markdown(f"[🔗 點擊前往閱讀完整新聞內容]({item['link']})")
         else:
-            st.info("目前系統未搜尋到相關的最新新聞。")
+            st.info("目前系統未搜尋到近期相關的新聞。")
