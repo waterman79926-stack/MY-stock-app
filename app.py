@@ -69,13 +69,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🎨 品牌標誌 (Logo) - 使用你 GitHub 倉庫的 Raw 原始圖片連結
+# 🎨 主標題與品牌標誌 (Logo)
 # ==========================================
 logo_url = "https://raw.githubusercontent.com/f0931215112/Streamlit_Stock/main/logo.png"
-st.sidebar.image(logo_url, use_container_width=True)
-st.sidebar.markdown("<div style='margin-top: -15px;'></div>", unsafe_allow_html=True)
 
-st.title("📈 StockVision 智能台股戰情室")
+st.markdown(
+    f"""
+    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+        <img src="{logo_url}" width="65" style="margin-right: 15px; border-radius: 50%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+        <h1 style="margin: 0; padding: 0;">StockVision 智能台股戰情室</h1>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 api = DataLoader()
 
