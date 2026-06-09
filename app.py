@@ -59,45 +59,37 @@ name_dict = get_stock_names()
 # 📌 側邊欄：一體化智慧選股控制台
 # ==========================================
 if 'selected_stock' not in st.session_state:
-    st.session_state.selected_stock = '' # 預設留空觸發歡迎首頁
+    st.session_state.selected_stock = '' 
 
 st.sidebar.header("📌 戰情室控制台")
 
-# 1. 智慧輸入框（支援代號與中文關鍵字）
-user_input = st.sidebar.text_input(
-    "輸入代號或名稱 (按 Enter 搜尋)", 
-    value=st.session_state.selected_stock, 
-    placeholder="例如: 2330 或 中華電"
+# 1. 智慧下拉搜尋選單 (支援中文與代號模糊搜尋)
+options_list = [f"{sid} {name}" for sid, name in name_dict.items()]
+default_idx = None
+
+# 判斷目前選中的股票在哪個 index，讓選單保持同步
+if st.session_state.selected_stock:
+    for i, opt in enumerate(options_list):
+        if opt.startswith(st.session_state.selected_stock):
+            default_idx = i
+            break
+
+selected_opt = st.sidebar.selectbox(
+    "🔍 搜尋股票代號或名稱",
+    options=options_list,
+    index=default_idx,
+    placeholder="輸入代號或關鍵字 (如: 元大)"
 )
 
-# 智慧解析邏輯
-target_stock = st.session_state.selected_stock
-
-if user_input:
-    user_input_clean = user_input.strip()
-    
-    # 如果是純數字，直接認作代號
-    if user_input_clean.isdigit():
-        target_stock = user_input_clean
-    else:
-        # 模糊比對中文名稱
-        matches = [sid for sid, name in name_dict.items() if user_input_clean in str(name)]
-        
-        if matches:
-            if len(matches) == 1:
-                target_stock = matches[0]
-            else:
-                # 找到多個相符項目時，跳出下拉選單讓使用者精確選擇
-                st.sidebar.warning("🔍 找到多檔相關股票：")
-                match_options = {f"{sid} {name_dict[sid]}": sid for sid in matches}
-                selected_opt = st.sidebar.selectbox("請選擇確切的股票：", list(match_options.keys()))
-                target_stock = match_options[selected_opt]
-        else:
-            st.sidebar.error("❌ 找不到相符的股票名稱，請重新輸入")
-
-# 檢查是否需要更新畫面
-if target_stock != st.session_state.selected_stock:
-    st.session_state.selected_stock = target_stock
+# 處理搜尋框變動
+if selected_opt:
+    new_stock = selected_opt.split(" ")[0]
+    if new_stock != st.session_state.selected_stock:
+        st.session_state.selected_stock = new_stock
+        st.rerun()
+elif st.session_state.selected_stock != "":
+    # 如果使用者把搜尋框清空，直接跳回首頁
+    st.session_state.selected_stock = ""
     st.rerun()
 
 # 2. 回首頁按鈕
@@ -123,57 +115,32 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("📅 圖表檢視區間")
 timeframe = st.sidebar.radio("選擇互動圖表範圍", ["近一月", "近三月", "近半年", "近一年", "近五年"])
 
-# 智慧警示服務 UI
+# ==========================================
+# ☕ 贊助與警示區塊
+# ==========================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔔 智慧警示服務 (Beta)")
 st.sidebar.caption("綁定 LINE 接收主力籌碼異動通知")
-st.sidebar.text_input("輸入您的 Email 或 LINE ID")
+st.sidebar.text_input("輸入您的 Email 或 LINE ID", label_visibility="collapsed", placeholder="輸入 Email / LINE ID")
 if st.sidebar.button("免費開通推播", type="primary", use_container_width=True):
     st.sidebar.success("✅ 設定成功！未來有重大籌碼異動將通知您。")
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("☕ 支持開發者")
+st.sidebar.caption("如果這個戰情室幫您避開了大跌或抓到起漲點，歡迎請我喝杯咖啡！")
+bmc_html = """
+<div style="text-align: center; margin-top: 10px;">
+    <a href="https://www.buymeacoffee.com/你的專屬帳號" target="_blank">
+        <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 45px !important;width: 162px !important;" >
+    </a>
+</div>
+"""
+st.sidebar.markdown(bmc_html, unsafe_allow_html=True)
+
+# 變數宣告
 end_date = datetime.today().strftime('%Y-%m-%d')
 start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
 selected_stock = st.session_state.selected_stock
-
-# ==========================================
-# 🤖 專業投顧 AI 分析引擎
-# ==========================================
-def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
-    if len(df) < 20: return "資料不足，無法進行深度解析。"
-    
-    close, ma_f_val, ma_s_val = df['Close'].iloc[-1], df['MA_fast'].iloc[-1], df['MA_slow'].iloc[-1]
-    rsi, macd_hist, macd_hist_prev = df['RSI'].iloc[-1], df['MACD_diff'].iloc[-1], df['MACD_diff'].iloc[-2]
-    
-    if close > ma_f_val > ma_s_val: trend = "均線呈現漂亮的『多頭排列』，目前多方牢牢掌握控盤權，下方支撐十分強勁。"
-    elif close < ma_f_val < ma_s_val: trend = "均線已跌至『空頭排列』，上檔累積了不小的套牢反壓，目前還在弱勢探底，絕對不宜貿然進場接刀。"
-    elif close > ma_s_val and close < ma_f_val: trend = "股價雖跌破短均線，但仍力守長均線生命線，屬於『高檔強勢整理』，後續看能否補量快速站回短均線。"
-    else: trend = "均線呈現糾結，處於『無方向性的沉悶盤整』，主力似乎還在觀望、醞釀下一波表態方向。"
-
-    if rsi >= 75: momentum = f"而且 RSI 已經飆到 {rsi:.1f} 的過熱超買區，隨時可能會有獲利了結的賣壓湧現。"
-    elif rsi <= 25: momentum = f"另外 RSI 降至 {rsi:.1f} 的嚴重超賣區，短線上浮現出跌深反彈的契機。"
-    else:
-        if macd_hist > 0 and macd_hist > macd_hist_prev: momentum = "MACD 紅柱持續放大，顯示多方攻擊的火種正在逐漸延燒。"
-        elif macd_hist < 0 and macd_hist < macd_hist_prev: momentum = "MACD 綠柱擴散，空方下殺動能增強，需提高持股的風險意識。"
-        else: momentum = "MACD 動能表現溫吞，缺乏明顯的爆發力道。"
-
-    inst_comment = "今日法人籌碼尚未更新，建議尾盤再做最後確認。"
-    if not df_inst.empty and df.index[-1].strftime('%Y-%m-%d') in df_inst.index:
-        today_inst = df_inst.loc[df.index[-1].strftime('%Y-%m-%d')]
-        f_buy, t_buy, d_buy = today_inst.get('外資', 0), today_inst.get('投信', 0), today_inst.get('自營商', 0)
-        total = f_buy + t_buy + d_buy
-        if f_buy > 0 and t_buy > 0: inst_comment = f"【土洋聯手做多】外資與投信今日『同步買超』共 {int(f_buy+t_buy):,} 張，籌碼高度集中在大戶手上，這對後續股價推升非常有戲。"
-        elif f_buy < 0 and t_buy < 0: inst_comment = f"【土洋無情雙殺】外資與投信今日『同步倒貨』，大戶都在跑路，必須嚴防籌碼鬆動引發的連環多殺多。"
-        elif total > 0: inst_comment = f"三大法人合計偏多操作，加碼了 {int(total):,} 張，背後主要是{'外資' if f_buy > t_buy else '投信'}在撐盤進場。"
-        else: inst_comment = f"三大法人整體偏向提款，賣超 {abs(int(total)):,} 張，顯示法人大戶現階段心態相當保守。"
-
-    if close > ma_s_val: strategy = f"目前大趨勢依舊站在多方，建議可以沿著 {s_ma}日線 (${ma_s_val:.2f}) 偏多操作。只要不跌破，持股續抱讓獲利奔跑；空手者可等量縮回測均線時再找買點，切忌盲目追高。"
-    else: strategy = "現在上方重重套牢賣壓，趨勢明顯轉弱。強烈建議多看少做，『現金為王』。若真的手癢想搶反彈，手腳一定要快，並嚴格把今天低點當作停損防守線。"
-
-    return (
-        f"* **💡 盤後重點速覽**：今天 {stock_name} 收在 **${close:.2f}**。就技術線型來看，{trend} {momentum}\n"
-        f"* **🕵️‍♂️ 籌碼追蹤**：{inst_comment}\n"
-        f"* **🎯 AI 分析師實戰建議**：{strategy}"
-    )
 
 # ==========================================
 # 📊 抓取資料模組
@@ -219,7 +186,47 @@ def get_stock_news(query):
     except: return []
 
 # ==========================================
-# 🚀 主畫面呈現
+# 🤖 專業投顧 AI 分析引擎
+# ==========================================
+def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
+    if len(df) < 20: return "資料不足，無法進行深度解析。"
+    
+    close, ma_f_val, ma_s_val = df['Close'].iloc[-1], df['MA_fast'].iloc[-1], df['MA_slow'].iloc[-1]
+    rsi, macd_hist, macd_hist_prev = df['RSI'].iloc[-1], df['MACD_diff'].iloc[-1], df['MACD_diff'].iloc[-2]
+    
+    if close > ma_f_val > ma_s_val: trend = "均線呈現漂亮的『多頭排列』，目前多方牢牢掌握控盤權，下方支撐十分強勁。"
+    elif close < ma_f_val < ma_s_val: trend = "均線已跌至『空頭排列』，上檔累積了不小的套牢反壓，目前還在弱勢探底，絕對不宜貿然進場接刀。"
+    elif close > ma_s_val and close < ma_f_val: trend = "股價雖跌破短均線，但仍力守長均線生命線，屬於『高檔強勢整理』，後續看能否補量快速站回短均線。"
+    else: trend = "均線呈現糾結，處於『無方向性的沉悶盤整』，主力似乎還在觀望、醞釀下一波表態方向。"
+
+    if rsi >= 75: momentum = f"而且 RSI 已經飆到 {rsi:.1f} 的過熱超買區，隨時可能會有獲利了結的賣壓湧現。"
+    elif rsi <= 25: momentum = f"另外 RSI 降至 {rsi:.1f} 的嚴重超賣區，短線上浮現出跌深反彈的契機。"
+    else:
+        if macd_hist > 0 and macd_hist > macd_hist_prev: momentum = "MACD 紅柱持續放大，顯示多方攻擊的火種正在逐漸延燒。"
+        elif macd_hist < 0 and macd_hist < macd_hist_prev: momentum = "MACD 綠柱擴散，空方下殺動能增強，需提高持股的風險意識。"
+        else: momentum = "MACD 動能表現溫吞，缺乏明顯的爆發力道。"
+
+    inst_comment = "今日法人籌碼尚未更新，建議尾盤再做最後確認。"
+    if not df_inst.empty and df.index[-1].strftime('%Y-%m-%d') in df_inst.index:
+        today_inst = df_inst.loc[df.index[-1].strftime('%Y-%m-%d')]
+        f_buy, t_buy, d_buy = today_inst.get('外資', 0), today_inst.get('投信', 0), today_inst.get('自營商', 0)
+        total = f_buy + t_buy + d_buy
+        if f_buy > 0 and t_buy > 0: inst_comment = f"【土洋聯手做多】外資與投信今日『同步買超』共 {int(f_buy+t_buy):,} 張，籌碼高度集中在大戶手上，這對後續股價推升非常有戲。"
+        elif f_buy < 0 and t_buy < 0: inst_comment = f"【土洋無情雙殺】外資與投信今日『同步倒貨』，大戶都在跑路，必須嚴防籌碼鬆動引發的連環多殺多。"
+        elif total > 0: inst_comment = f"三大法人合計偏多操作，加碼了 {int(total):,} 張，背後主要是{'外資' if f_buy > t_buy else '投信'}在撐盤進場。"
+        else: inst_comment = f"三大法人整體偏向提款，賣超 {abs(int(total)):,} 張，顯示法人大戶現階段心態相當保守。"
+
+    if close > ma_s_val: strategy = f"目前大趨勢依舊站在多方，建議可以沿著 {s_ma}日線 (${ma_s_val:.2f}) 偏多操作。只要不跌破，持股續抱讓獲利奔跑；空手者可等量縮回測均線時再找買點，切忌盲目追高。"
+    else: strategy = "現在上方重重套牢賣壓，趨勢明顯轉弱。強烈建議多看少做，『現金為王』。若真的手癢想搶反彈，手腳一定要快，並嚴格把今天低點當作停損防守線。"
+
+    return (
+        f"* **💡 盤後重點速覽**：今天 {stock_name} 收在 **${close:.2f}**。就技術線型來看，{trend} {momentum}\n"
+        f"* **🕵️‍♂️ 籌碼追蹤**：{inst_comment}\n"
+        f"* **🎯 AI 分析師實戰建議**：{strategy}"
+    )
+
+# ==========================================
+# 🚀 畫面呈現 (首頁 Landing Page vs 戰情室)
 # ==========================================
 if not selected_stock:
     # --- 精緻首頁 Landing Page ---
@@ -284,6 +291,14 @@ else:
         price_change = current_price - prev_close
         price_change_pct = (price_change / prev_close) * 100 if prev_close != 0 else 0
         
+        # ⚠️ 補回上次不小心刪掉的 get_ret 函數
+        def get_ret(m=0, y=0):
+            if len(df_price) < 5: return None
+            target = df_price.index[-1] - pd.DateOffset(months=m, years=y)
+            past = df_price[df_price.index >= target]
+            if not past.empty: return ((current_price - past['Close'].iloc[0]) / past['Close'].iloc[0]) * 100
+            return None
+        
         st.write("### 💵 即時股價與公司體質檢測")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("最新收盤價", f"${current_price:.2f}", f"{price_change:+.2f} ({price_change_pct:+.2f}%)", delta_color="inverse")
@@ -345,7 +360,7 @@ else:
         else:
             st.warning("⚠️ 籌碼資料處理失敗，或今日資料尚未更新。")
 
-        # --- 💰 配息與 📰 新聞 (左右雙欄) ---
+        # --- 💰 配息與 📰 新聞 ---
         st.markdown("---")
         col_left, col_right = st.columns([1, 1.5]) 
 
@@ -365,8 +380,11 @@ else:
                     st.markdown(f"**近五年平均:** `${avg_div:.2f}` (平均殖利率: **{(avg_div/current_price)*100:.2f}%**)")
                     
                     fig_div = gr.Figure(gr.Bar(
-                        x=annual_div['year'].astype(str) + "年", y=annual_div['cash_dividend'],
-                        text=annual_div['cash_dividend'].apply(lambda x: f"${x:.2f}"), textposition='auto', marker_color='#e67e22' 
+                        x=annual_div['year'].astype(str) + "年", 
+                        y=annual_div['cash_dividend'],
+                        text=annual_div['cash_dividend'].apply(lambda x: f"${x:.2f}"), 
+                        textposition='auto', 
+                        marker_color='#e67e22' 
                     ))
                     fig_div.update_layout(height=280, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), bargap=0.3, yaxis_title="現金股利 (元)")
                     st.plotly_chart(fig_div, use_container_width=True)
