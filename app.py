@@ -69,9 +69,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🎨 品牌標誌 (Logo) - 改用雲端網址，徹底解決找不到檔案的問題
+# 🎨 品牌標誌 (Logo) - 使用你 GitHub 倉庫的 Raw 原始圖片連結
 # ==========================================
-logo_url = "https://images.prodia.xyz/81fa3bf0-b1fb-4299-8086-ff7d3539828d.png"
+logo_url = "https://raw.githubusercontent.com/f0931215112/Streamlit_Stock/main/logo.png"
 st.sidebar.image(logo_url, use_container_width=True)
 st.sidebar.markdown("<div style='margin-top: -15px;'></div>", unsafe_allow_html=True)
 
