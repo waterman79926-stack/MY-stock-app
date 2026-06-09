@@ -40,7 +40,11 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
-
+# ==========================================
+# 🎨 品牌標誌 (Logo)
+# ==========================================
+st.sidebar.image("logo.png", use_container_width=True)
+st.sidebar.markdown("<br>", unsafe_allow_html=True) # 加一點間距
 st.title("📈 StockVision 智能台股戰情室")
 
 api = DataLoader()
