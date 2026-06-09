@@ -10,13 +10,11 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 import email.utils
 
-# 網頁基本設定與 CSS 注入 (優化手機版按鈕與字體)
-st.set_page_config(page_title="我的專屬持股即時監控面板", layout="wide")
+# 網頁基本設定與 CSS 注入
+st.set_page_config(page_title="StockVision 智能台股戰情室", layout="wide", page_icon="📈")
 
-# 注入自訂 CSS 來美化手機版的左上角展開按鈕
 st.markdown("""
     <style>
-    /* 放大並突顯左上角的側邊欄展開按鈕 */
     [data-testid="collapsedControl"] {
         background-color: #ff4b4b !important;
         border-radius: 8px;
@@ -32,14 +30,21 @@ st.markdown("""
     [data-testid="collapsedControl"]:hover {
         background-color: #ff3333 !important;
     }
+    .landing-title {
+        font-size: 3rem;
+        font-weight: 800;
+        background: -webkit-linear-gradient(45deg, #ff4b4b, #ff904f);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 1rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 我的專屬持股即時監控面板")
+st.title("📈 StockVision 智能台股戰情室")
 
 api = DataLoader()
 
-# --- 取得台股代號與中文名稱 ---
 @st.cache_data(ttl=86400) 
 def get_stock_names():
     try:
@@ -51,20 +56,25 @@ def get_stock_names():
 name_dict = get_stock_names()
 
 # ==========================================
-# 📌 側邊欄：一體化選股與快捷按鍵
+# 📌 側邊欄：一體化選股與警示服務
 # ==========================================
 if 'selected_stock' not in st.session_state:
-    st.session_state.selected_stock = '0050'
+    st.session_state.selected_stock = '' # 預設留空，觸發首頁
 
-st.sidebar.header("📌 持股設定")
+st.sidebar.header("📌 戰情室控制台")
 
 # 1. 單一輸入框
-user_input = st.sidebar.text_input("輸入股票代號 (按 Enter 確定)", value=st.session_state.selected_stock)
+user_input = st.sidebar.text_input("輸入股票代號 (按 Enter 確定)", value=st.session_state.selected_stock, placeholder="例如: 2330")
 if user_input != st.session_state.selected_stock:
     st.session_state.selected_stock = user_input
     st.rerun()
 
-# 2. 常用股票快捷鍵
+# 2. 首頁按鈕
+if st.sidebar.button("🏠 回到戰情室首頁", use_container_width=True):
+    st.session_state.selected_stock = ''
+    st.rerun()
+
+# 3. 常用股票快捷鍵
 st.sidebar.write("⚡ 常用自選股：")
 quick_stocks = ["0050", "2330", "2317", "00878", "00981A", "0056"]
 cols = st.sidebar.columns(3)
@@ -74,7 +84,7 @@ for i, stock in enumerate(quick_stocks):
         st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📊 均線參數")
+st.sidebar.subheader("📊 均線參數設定")
 ma_fast = st.sidebar.number_input("快均線 (MA)", min_value=5, max_value=60, value=5)
 ma_slow = st.sidebar.number_input("慢均線 (MA)", min_value=10, max_value=240, value=20)
 
@@ -82,9 +92,60 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("📅 圖表檢視區間")
 timeframe = st.sidebar.radio("選擇互動圖表範圍", ["近一月", "近三月", "近半年", "近一年", "近五年"])
 
+# 模擬的警示服務 UI (SaaS 體驗)
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔔 智慧警示服務 (Beta)")
+st.sidebar.caption("綁定 LINE 接收主力籌碼異動通知")
+st.sidebar.text_input("輸入您的 Email 或 LINE ID")
+if st.sidebar.button("免費開通推播", type="primary", use_container_width=True):
+    st.sidebar.success("✅ 設定成功！未來有重大籌碼異動將通知您。")
+
 end_date = datetime.today().strftime('%Y-%m-%d')
 start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
 selected_stock = st.session_state.selected_stock
+
+# ==========================================
+# 📊 抓取資料模組
+# ==========================================
+@st.cache_data(ttl=300) 
+def get_price_data(stock_id):
+    ticker = yf.Ticker(f"{stock_id}.TW")
+    df = ticker.history(period="5y")
+    divs = pd.Series(dtype='float64')
+    info = {}
+    if df.empty:
+        ticker = yf.Ticker(f"{stock_id}.TWO")
+        df = ticker.history(period="5y")
+    if not df.empty: 
+        df.index = df.index.tz_localize(None)
+        try: divs = ticker.dividends
+        except: pass
+        try: info = ticker.info
+        except: pass
+    return df, divs, info
+
+@st.cache_data(ttl=300)
+def get_inst_data(stock_id, start, end):
+    try: return api.taiwan_stock_institutional_investors(stock_id=stock_id, start_date=start, end_date=end)
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=1800)
+def get_stock_news(query):
+    url = f"https://news.google.com/rss/search?q={quote(query)}+when:7d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response: xml_data = response.read()
+        root = ET.fromstring(xml_data)
+        news = []
+        for item in root.findall('./channel/item'):
+            title = item.find('title').text
+            link = item.find('link').text
+            pub_date = email.utils.parsedate_to_datetime(item.find('pubDate').text)
+            news.append({'title': title, 'link': link, 'date': pub_date})
+        news = sorted(news, key=lambda x: x['date'], reverse=True)[:3]
+        for n in news: n['date_str'] = n['date'].strftime('%Y-%m-%d %H:%M') 
+        return news
+    except: return []
 
 # ==========================================
 # 🤖 專業投顧 AI 分析引擎
@@ -92,12 +153,8 @@ selected_stock = st.session_state.selected_stock
 def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if len(df) < 20: return "資料不足，無法進行深度解析。"
     
-    close = df['Close'].iloc[-1]
-    ma_f_val = df['MA_fast'].iloc[-1]
-    ma_s_val = df['MA_slow'].iloc[-1]
-    rsi = df['RSI'].iloc[-1]
-    macd_hist = df['MACD_diff'].iloc[-1]
-    macd_hist_prev = df['MACD_diff'].iloc[-2]
+    close, ma_f_val, ma_s_val = df['Close'].iloc[-1], df['MA_fast'].iloc[-1], df['MA_slow'].iloc[-1]
+    rsi, macd_hist, macd_hist_prev = df['RSI'].iloc[-1], df['MACD_diff'].iloc[-1], df['MACD_diff'].iloc[-2]
     
     if close > ma_f_val > ma_s_val: trend = "均線呈現漂亮的『多頭排列』，目前多方牢牢掌握控盤權，下方支撐十分強勁。"
     elif close < ma_f_val < ma_s_val: trend = "均線已跌至『空頭排列』，上檔累積了不小的套牢反壓，目前還在弱勢探底，絕對不宜貿然進場接刀。"
@@ -116,7 +173,6 @@ def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
         today_inst = df_inst.loc[df.index[-1].strftime('%Y-%m-%d')]
         f_buy, t_buy, d_buy = today_inst.get('外資', 0), today_inst.get('投信', 0), today_inst.get('自營商', 0)
         total = f_buy + t_buy + d_buy
-        
         if f_buy > 0 and t_buy > 0: inst_comment = f"【土洋聯手做多】外資與投信今日『同步買超』共 {int(f_buy+t_buy):,} 張，籌碼高度集中在大戶手上，這對後續股價推升非常有戲。"
         elif f_buy < 0 and t_buy < 0: inst_comment = f"【土洋無情雙殺】外資與投信今日『同步倒貨』，大戶都在跑路，必須嚴防籌碼鬆動引發的連環多殺多。"
         elif total > 0: inst_comment = f"三大法人合計偏多操作，加碼了 {int(total):,} 張，背後主要是{'外資' if f_buy > t_buy else '投信'}在撐盤進場。"
@@ -132,67 +188,38 @@ def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     )
 
 # ==========================================
-# 📊 抓取資料模組
+# 🚀 畫面呈現 (首頁 Landing Page vs 戰情室)
 # ==========================================
-@st.cache_data(ttl=300) 
-def get_price_data(stock_id):
-    ticker = yf.Ticker(f"{stock_id}.TW")
-    df = ticker.history(period="5y")
-    divs = pd.Series(dtype='float64')
-    if df.empty:
-        ticker = yf.Ticker(f"{stock_id}.TWO")
-        df = ticker.history(period="5y")
-    if not df.empty: 
-        df.index = df.index.tz_localize(None)
-        try: divs = ticker.dividends
-        except: pass
-    return df, divs
+if not selected_stock:
+    # --- 精緻首頁 Landing Page ---
+    st.markdown('<div class="landing-title">洞悉主力籌碼，精準打擊獲利。</div>', unsafe_allow_html=True)
+    st.write("### 歡迎來到 StockVision 智能台股戰情室")
+    st.write("這是一個專為現代投資人打造的無廣告、高流暢度看盤系統。請在左側 **「戰情室控制台」** 點擊或輸入股票代號開始分析。")
+    
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info("#### 🤖 專屬 AI 盤後解析\n不再對著冰冷的線圖發呆，AI 分析師每日為您總結技術面與籌碼面的最佳實戰操作策略。")
+    with col2:
+        st.success("#### 🕵️‍♂️ 三大法人籌碼追蹤\n直觀的柱狀圖設計，一眼看穿外資、投信與自營商的每日買賣超動向，抓住土洋對作契機。")
+    with col3:
+        st.warning("#### 💰 歷年配息與基本面\n一鍵試算殖利率，並整合最新 Google 即時新聞與公司財務指標，存股族也能輕鬆掌握。")
 
-@st.cache_data(ttl=300)
-def get_inst_data(stock_id, start, end):
-    try: return api.taiwan_stock_institutional_investors(stock_id=stock_id, start_date=start, end_date=end)
-    except: return pd.DataFrame()
-
-@st.cache_data(ttl=1800)
-def get_stock_news(query):
-    url = f"https://news.google.com/rss/search?q={quote(query)}+when:7d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            xml_data = response.read()
-        root = ET.fromstring(xml_data)
-        news = []
-        for item in root.findall('./channel/item'):
-            title = item.find('title').text
-            link = item.find('link').text
-            pub_date_str = item.find('pubDate').text
-            pub_date = email.utils.parsedate_to_datetime(pub_date_str)
-            news.append({'title': title, 'link': link, 'date': pub_date})
-        
-        news = sorted(news, key=lambda x: x['date'], reverse=True)[:3]
-        for n in news:
-            n['date_str'] = n['date'].strftime('%Y-%m-%d %H:%M') 
-        return news
-    except:
-        return []
-
-# ==========================================
-# 🚀 主畫面呈現
-# ==========================================
-if selected_stock:
+else:
+    # --- 戰情室主畫面 ---
     stock_chinese_name = name_dict.get(selected_stock, "")
     display_title = f"{selected_stock} {stock_chinese_name}" if stock_chinese_name else selected_stock
     
-    st.subheader(f"🔍 {display_title} 全方位盤態分析")
+    st.subheader(f"🔍 {display_title} 深度戰情分析")
     
-    with st.spinner("深度資料運算中..."):
-        df_price, divs_data = get_price_data(selected_stock)
+    with st.spinner("深度資料與基本面運算中..."):
+        df_price, divs_data, info_data = get_price_data(selected_stock)
         df_raw_inst = get_inst_data(selected_stock, start_date, end_date)
 
     if df_price.empty:
         st.error("找不到該股票的歷史價格，請確認代號是否正確。")
     else:
-        # --- 數據計算區 ---
+        # 數據計算區
         df_price['MA_fast'] = df_price['Close'].rolling(window=ma_fast).mean()
         df_price['MA_slow'] = df_price['Close'].rolling(window=ma_slow).mean()
         delta = df_price['Close'].diff()
@@ -220,19 +247,35 @@ if selected_stock:
             for col in ['外資', '投信', '自營商']:
                 if col not in df_inst_clean.columns: df_inst_clean[col] = 0
 
-        # --- 💵 即時股價重點 ---
+        # --- 💵 報價與基本面 (雙排顯示) ---
         current_price = df_price['Close'].iloc[-1]
         prev_close = df_price['Close'].iloc[-2] if len(df_price) > 1 else current_price
         price_change = current_price - prev_close
         price_change_pct = (price_change / prev_close) * 100 if prev_close != 0 else 0
         
-        st.write("### 💵 即時股價重點")
+        st.write("### 💵 即時股價與公司體質檢測")
         c1, c2, c3, c4 = st.columns(4)
-        # delta_color="inverse" 讓系統自動變成紅漲綠跌
         c1.metric("最新收盤價", f"${current_price:.2f}", f"{price_change:+.2f} ({price_change_pct:+.2f}%)", delta_color="inverse")
         c2.metric("今日最高", f"${df_price['High'].iloc[-1]:.2f}")
         c3.metric("今日最低", f"${df_price['Low'].iloc[-1]:.2f}")
         c4.metric("成交張數", f"{int(df_price['Volume'].iloc[-1] / 1000):,} 張")
+        
+        # 新增：財報基本面卡片
+        if info_data:
+            b1, b2, b3, b4 = st.columns(4)
+            pe_ratio = info_data.get('trailingPE', 'N/A')
+            eps = info_data.get('trailingEps', 'N/A')
+            pb_ratio = info_data.get('priceToBook', 'N/A')
+            
+            # 將數值格式化，避免出錯
+            pe_str = f"{pe_ratio:.2f} 倍" if isinstance(pe_ratio, (int, float)) else pe_ratio
+            eps_str = f"${eps:.2f}" if isinstance(eps, (int, float)) else eps
+            pb_str = f"{pb_ratio:.2f} 倍" if isinstance(pb_ratio, (int, float)) else pb_ratio
+
+            b1.metric("本益比 (P/E)", pe_str)
+            b2.metric("每股盈餘 (EPS)", eps_str)
+            b3.metric("股價淨值比 (P/B)", pb_str)
+            b4.metric("產業類別", info_data.get('sector', 'N/A'))
         
         st.markdown("---")
         st.success(generate_pro_analysis(df_price, df_inst_clean, display_title, ma_fast, ma_slow))
@@ -280,11 +323,9 @@ if selected_stock:
         else:
             st.warning("⚠️ 籌碼資料處理失敗，或今日資料尚未更新。")
 
-        # ==========================================
-        # 💰 配息與 📰 新聞 (非對稱雙欄設計，圖表 40%，新聞 60%)
-        # ==========================================
+        # --- 💰 配息與 📰 新聞 ---
         st.markdown("---")
-        col_left, col_right = st.columns([1, 1.5]) # 調整比例讓圖表變窄
+        col_left, col_right = st.columns([1, 1.5]) 
 
         with col_left:
             st.write("### 💰 歷年配息與殖利率")
@@ -301,13 +342,12 @@ if selected_stock:
                     st.markdown(f"**{annual_div['year'].iloc[-1]}年 股利:** `${latest_div:.2f}` (殖利率: **{(latest_div/current_price)*100:.2f}%**)")
                     st.markdown(f"**近五年平均:** `${avg_div:.2f}` (平均殖利率: **{(avg_div/current_price)*100:.2f}%**)")
                     
-                    # 換成暖金橘色的柱狀圖，並縮減圖表高度與間距
                     fig_div = gr.Figure(gr.Bar(
                         x=annual_div['year'].astype(str) + "年", 
                         y=annual_div['cash_dividend'],
                         text=annual_div['cash_dividend'].apply(lambda x: f"${x:.2f}"), 
                         textposition='auto', 
-                        marker_color='#e67e22' # 暖金橘色
+                        marker_color='#e67e22' 
                     ))
                     fig_div.update_layout(height=280, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), bargap=0.3, yaxis_title="現金股利 (元)")
                     st.plotly_chart(fig_div, use_container_width=True)
@@ -322,11 +362,8 @@ if selected_stock:
             
             if news_list:
                 for item in news_list:
-                    with st.expander(f"📌 {item['title']}", expanded=True): # 預設展開讓畫面更豐富
+                    with st.expander(f"📌 {item['title']}", expanded=True): 
                         st.write(f"🕒 發布時間：{item['date_str']}")
                         st.markdown(f"[🔗 點擊前往閱讀完整新聞內容]({item['link']})")
             else:
                 st.info("目前系統未搜尋到近期相關的新聞。")
-
-else:
-    st.warning("請在側邊欄輸入至少一檔股票代號。")
