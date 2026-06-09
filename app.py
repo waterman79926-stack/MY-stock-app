@@ -15,33 +15,34 @@ st.set_page_config(page_title="StockVision 智能台股戰情室", layout="wide"
 
 st.markdown("""
     <style>
-    /* 1. 減少主頁最上方的預設留白 */
+    /* 1. 減少主頁最上方的預設留白，讓主標再往上移 */
     .block-container {
-        padding-top: 1.5rem !important;
+        padding-top: 1rem !important;
         padding-bottom: 0rem !important;
     }
     [data-testid="stHeader"] {
         background-color: rgba(0,0,0,0) !important;
+        height: 0px !important;
     }
     
-    /* 2. 縮小 st.metric 數據的字體大小 */
+    /* 2. 精調 st.metric 數據的字體大小，使其更精緻 */
     [data-testid="stMetricValue"] {
-        font-size: 1.6rem !important;
+        font-size: 1.4rem !important;
         font-weight: 700 !important;
     }
     [data-testid="stMetricLabel"] {
-        font-size: 0.9rem !important;
+        font-size: 0.85rem !important;
     }
     
-    /* 3. 縮小第一行與第二行 st.metric 之間的垂直間距 */
+    /* 3. 壓縮第一行與第二行數據指標之間的上下間距 */
     [data-testid="stVerticalBlock"] > div {
-        padding-bottom: 0.2rem !important;
+        padding-bottom: 0.1rem !important;
     }
     div[element-to-leaf="verticalblock"] > div {
-        gap: 0.4rem !important;
+        gap: 0.2rem !important;
     }
     
-    /* 側邊欄控制與主標樣式 */
+    /* 側邊欄控制樣式 */
     [data-testid="collapsedControl"] {
         background-color: #ff4b4b !important;
         border-radius: 8px;
@@ -69,15 +70,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🎨 主標題與品牌標誌 (Logo)
+# 🎨 主標題與品牌標誌 (Logo 並排版)
 # ==========================================
-logo_url = "https://raw.githubusercontent.com/f0931215112/Streamlit_Stock/main/logo.png"
+# 修正為符合你 GitHub 真實檔名的 logo.png.jpg
+logo_url = "https://raw.githubusercontent.com/f0931215112/Streamlit_Stock/main/logo.png.jpg"
 
 st.markdown(
     f"""
-    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-        <img src="{logo_url}" width="65" style="margin-right: 15px; border-radius: 50%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-        <h1 style="margin: 0; padding: 0;">StockVision 智能台股戰情室</h1>
+    <div style="display: flex; align-items: center; margin-bottom: 0.8rem; margin-top: -10px;">
+        <img src="{logo_url}" width="55" style="margin-right: 15px; border-radius: 50%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+        <h2 style="margin: 0; padding: 0; font-size: 2.2rem; font-weight: 800;">StockVision 智能台股戰情室</h2>
     </div>
     """,
     unsafe_allow_html=True
@@ -96,7 +98,7 @@ def get_stock_names():
 name_dict = get_stock_names()
 
 # ==========================================
-# 📌 側邊欄：直覺化文字搜尋與控制台
+# 📌 側邊欄：控制台設定
 # ==========================================
 if 'selected_stock' not in st.session_state:
     st.session_state.selected_stock = '' 
@@ -117,7 +119,6 @@ if search_query:
             st.rerun()
     else:
         matches = [sid for sid, name in name_dict.items() if query_clean in str(name) or query_clean in sid]
-        
         if matches:
             if len(matches) == 1:
                 if st.session_state.selected_stock != matches[0]:
@@ -158,9 +159,7 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("📅 圖表檢視區間")
 timeframe = st.sidebar.radio("選擇互動圖表範圍", ["近一月", "近三月", "近半年", "近一年", "近五年"])
 
-# ==========================================
-# ☕ 贊助與警示區塊
-# ==========================================
+# 智慧警示服務 UI
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔔 智慧警示服務 (Beta)")
 st.sidebar.caption("綁定 LINE 接收主力籌碼異動通知")
@@ -173,7 +172,7 @@ st.sidebar.subheader("☕ 支持開發者")
 st.sidebar.caption("如果這個戰情室幫您避開了大跌或抓到起漲點，歡迎請我喝杯咖啡！")
 bmc_html = """
 <div style="text-align: center; margin-top: 10px;">
-    <a href="https://www.buymeacoffee.com/你的專屬帳號" target="_blank">
+    <a href="https://ko-fi.com/" target="_blank">
         <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 45px !important;width: 162px !important;" >
     </a>
 </div>
@@ -230,7 +229,7 @@ def get_stock_news(query):
     except: return []
 
 # ==========================================
-# 🤖 專業投顧 AI 分析引擎 (精簡單行版)
+# 🤖 專業投顧 AI 分析引擎
 # ==========================================
 def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if len(df) < 20: return "資料不足，無法進行深度解析。"
@@ -263,7 +262,7 @@ def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
     if close > ma_s_val: strategy = f"趨勢偏多，沿 {s_ma}日線操作，未跌破則續抱，空手者待量縮回測再佈局。"
     else: strategy = "上方賣壓沉重，趨勢轉弱，建議多看少做現金為王，搶反彈需嚴格停損。"
 
-    disclaimer = "\n> ⚠️ **免責聲明**：AI 分析僅供參考，**不構成買賣建議**，投資請獨立判斷並自負盈虧。"
+    disclaimer = "\n> ⚠️ **免責聲明**：AI 分析僅供參考，不構成買賣建議，投資請獨立判斷並自負盈虧。"
 
     return (
         f"* **💡 盤後重點速覽**：今天收盤 **${close:.2f}**。技術線型顯示：{trend} {momentum}\n"
@@ -292,7 +291,7 @@ else:
     stock_chinese_name = name_dict.get(selected_stock, "")
     display_title = f"{selected_stock} {stock_chinese_name}" if stock_chinese_name else selected_stock
     
-    st.subheader(f"🔍 {display_title} 深度戰情分析")
+    st.markdown(f"#### 🔍 {display_title} 深度戰情分析")
     
     with st.spinner("深度資料與基本面運算中..."):
         df_price, divs_data, info_data = get_price_data(selected_stock)
@@ -328,7 +327,7 @@ else:
             for col in ['外資', '投信', '自營商']:
                 if col not in df_inst_clean.columns: df_inst_clean[col] = 0
 
-        # --- 💵 報價與基本面 (已縮小字體與垂直間距) ---
+        # --- 💵 報價與基本面 (移除 if info_data 限制，確保欄位永不隱形) ---
         current_price = df_price['Close'].iloc[-1]
         prev_close = df_price['Close'].iloc[-2] if len(df_price) > 1 else current_price
         price_change = current_price - prev_close
@@ -341,30 +340,28 @@ else:
             if not past.empty: return ((current_price - past['Close'].iloc[0]) / past['Close'].iloc[0]) * 100
             return None
         
-        st.write("### 💵 即時股價與公司體質檢測")
-        
-        # 第一行資訊
+        # 第一行資訊卡
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("最新收盤價", f"${current_price:.2f}", f"{price_change:+.2f} ({price_change_pct:+.2f}%)", delta_color="inverse")
         c2.metric("今日最高", f"${df_price['High'].iloc[-1]:.2f}")
         c3.metric("今日最低", f"${df_price['Low'].iloc[-1]:.2f}")
         c4.metric("成交張數", f"{int(df_price['Volume'].iloc[-1] / 1000):,} 張")
         
-        # 第二行資訊 (與第一行緊密貼合)
-        if info_data:
-            b1, b2, b3, b4 = st.columns(4)
-            pe_ratio = info_data.get('trailingPE', 'N/A')
-            eps = info_data.get('trailingEps', 'N/A')
-            pb_ratio = info_data.get('priceToBook', 'N/A')
-            
-            pe_str = f"{pe_ratio:.2f} 倍" if isinstance(pe_ratio, (int, float)) else pe_ratio
-            eps_str = f"${eps:.2f}" if isinstance(eps, (int, float)) else eps
-            pb_str = f"{pb_ratio:.2f} 倍" if isinstance(pb_ratio, (int, float)) else pb_ratio
+        # 第二行資訊卡 (拔除限制，就算 info 漏抓也維持 N/A 排版不消失)
+        b1, b2, b3, b4 = st.columns(4)
+        pe_ratio = info_data.get('trailingPE', 'N/A') if info_data else 'N/A'
+        eps = info_data.get('trailingEps', 'N/A') if info_data else 'N/A'
+        pb_ratio = info_data.get('priceToBook', 'N/A') if info_data else 'N/A'
+        sector = info_data.get('sector', 'N/A') if info_data else 'N/A'
+        
+        pe_str = f"{pe_ratio:.2f} 倍" if isinstance(pe_ratio, (int, float)) else "N/A"
+        eps_str = f"${eps:.2f}" if isinstance(eps, (int, float)) else "N/A"
+        pb_str = f"{pb_ratio:.2f} 倍" if isinstance(pb_ratio, (int, float)) else "N/A"
 
-            b1.metric("本益比 (P/E)", pe_str)
-            b2.metric("每股盈餘 (EPS)", eps_str)
-            b3.metric("股價淨值比 (P/B)", pb_str)
-            b4.metric("產業類別", info_data.get('sector', 'N/A'))
+        b1.metric("本益比 (P/E)", pe_str)
+        b2.metric("每股盈餘 (EPS)", eps_str)
+        b3.metric("股價淨值比 (P/B)", pb_str)
+        b4.metric("產業類別", str(sector))
         
         st.markdown("---")
         st.success(generate_pro_analysis(df_price, df_inst_clean, display_title, ma_fast, ma_slow))
