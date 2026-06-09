@@ -1,6 +1,6 @@
-streamlit
+streamlit>=1.30.0
+pandas>=2.0.0
+yfinance
 FinMind
 plotly
-pandas
-anyio<4.0.0
-yfinance
+requests
