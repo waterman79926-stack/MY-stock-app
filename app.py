@@ -9,15 +9,14 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="我的專屬持股即時監控面板", layout="wide")
 st.title("📈 我的專屬持股即時監控面板")
 
-# 初始化 FinMind (用來抓法人資料與股票名稱)
+# 初始化 FinMind
 api = DataLoader()
 
 # --- 取得台股代號與中文名稱對照表 ---
-@st.cache_data(ttl=86400) # 快取 24 小時
+@st.cache_data(ttl=86400) 
 def get_stock_names():
     try:
         df_info = api.taiwan_stock_info()
-        # 建立 dict: {'2330': '台積電', '0050': '元大台灣50', ...}
         return dict(zip(df_info['stock_id'], df_info['stock_name']))
     except:
         return {}
@@ -29,7 +28,7 @@ st.sidebar.header("📌 持股設定與參數")
 
 my_stocks = st.sidebar.text_input(
     "輸入自選股代號（用逗號分隔）", 
-    value="2330, 0050, 2454, 2317, 00878"
+    value="2330, 0050, 2454, 2317, 00878, 00981A"
 )
 stock_list = [s.strip() for s in my_stocks.split(",") if s.strip()]
 
@@ -50,22 +49,17 @@ if stock_list:
     
     st.subheader(f"🔍 {display_title} 詳細盤態分析")
     
-    # 1. 抓取精準股價 (使用 yfinance)
     @st.cache_data(ttl=300) 
     def get_price_data(stock_id):
-        # 先嘗試上市 (.TW)
         ticker = yf.Ticker(f"{stock_id}.TW")
         df = ticker.history(period="6mo")
         if df.empty:
-            # 如果空的，嘗試上櫃 (.TWO)
             ticker = yf.Ticker(f"{stock_id}.TWO")
             df = ticker.history(period="6mo")
-        
         if not df.empty:
-            df.index = df.index.tz_localize(None) # 移除時區，方便畫圖
+            df.index = df.index.tz_localize(None) 
         return df
 
-    # 2. 抓取法人籌碼 (使用 FinMind)
     @st.cache_data(ttl=300)
     def get_inst_data(stock_id, start, end):
         try:
@@ -102,19 +96,16 @@ if stock_list:
         df_price['MA_fast'] = df_price['Close'].rolling(window=ma_fast).mean()
         df_price['MA_slow'] = df_price['Close'].rolling(window=ma_slow).mean()
         
-        # 布林通道
         df_price['STD20'] = df_price['Close'].rolling(window=20).std()
         df_price['BB_upper'] = df_price['MA_slow'] + (df_price['STD20'] * 2)
         df_price['BB_lower'] = df_price['MA_slow'] - (df_price['STD20'] * 2)
 
-        # RSI (14日)
         delta = df_price['Close'].diff()
         gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
         loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
         rs = gain / loss
         df_price['RSI'] = 100 - (100 / (1 + rs))
 
-        # MACD
         exp1 = df_price['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df_price['Close'].ewm(span=26, adjust=False).mean()
         df_price['MACD'] = exp1 - exp2
@@ -167,17 +158,25 @@ if stock_list:
         st.markdown("---")
         
         # ==========================================
-        # 👥 3. 每日三大法人買賣超
+        # 👥 3. 每日三大法人買賣超 (模糊比對防護版)
         # ==========================================
         st.subheader("👥 每日三大法人買賣超明細（張）")
         if not df_inst.empty:
             df_inst['buy_net_g'] = df_inst['buy'] - df_inst['sell']
-            pivot_df = df_inst.pivot(index='date', columns='name', values='buy_net_g').fillna(0)
+            
+            # 使用 pivot_table 避免重複資料當機
+            pivot_df = df_inst.pivot_table(index='date', columns='name', values='buy_net_g', aggfunc='sum').fillna(0)
             pivot_df = pivot_df / 1000
             
-            pivot_df['自營商'] = pivot_df.get('自營商買賣超股數(自行買賣)', 0) + pivot_df.get('自營商買賣超股數(避險)', 0) + pivot_df.get('自營商買賣超股數', 0)
-            pivot_df['外資'] = pivot_df.get('外陸資買賣超股數', 0)
-            pivot_df['投信'] = pivot_df.get('投信買賣超股數', 0)
+            # 🛡️ 關鍵修復：關鍵字模糊抓取（不管 FinMind 改成什麼名字都能抓到）
+            foreign_cols = [c for c in pivot_df.columns if '外資' in str(c) or '外陸' in str(c)]
+            trust_cols = [c for c in pivot_df.columns if '投信' in str(c)]
+            dealer_cols = [c for c in pivot_df.columns if '自營' in str(c)]
+
+            # 加總對應的欄位
+            pivot_df['外資'] = pivot_df[foreign_cols].sum(axis=1) if foreign_cols else 0
+            pivot_df['投信'] = pivot_df[trust_cols].sum(axis=1) if trust_cols else 0
+            pivot_df['自營商'] = pivot_df[dealer_cols].sum(axis=1) if dealer_cols else 0
 
             summary_inst = pivot_df[['外資', '投信', '自營商']]
             summary_inst.index = pd.to_datetime(summary_inst.index)
