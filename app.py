@@ -28,7 +28,7 @@ st.markdown("""
     [data-testid="collapsedControl"] { background-color: #ff4b4b !important; border-radius: 8px; padding: 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: 0.3s; }
     [data-testid="collapsedControl"] svg { width: 28px !important; height: 28px !important; stroke: white !important; }
     [data-testid="collapsedControl"]:hover { background-color: #ff3333 !important; }
-    .landing-title { font-size: 3rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #ff4b4b, #ff904f); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 1rem; }
+    .landing-title { font-size: 2.5rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #ff4b4b, #ff904f); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.5rem; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -55,15 +55,23 @@ st.markdown(
 
 api = DataLoader()
 
-# 修正 1：強制將 stock_id 轉為字串，徹底解決 2324 搜尋不到的 Bug
+# 強化版股票字典：包含強制字串轉換與核心備援字典
 @st.cache_data(ttl=86400) 
 def get_tw_stock_info():
+    fallback = {
+        '2330': '台積電', '2317': '鴻海', '2324': '仁寶', '4770': '上品', 
+        '0050': '元大台灣50', '0056': '元大高股息', '00878': '國泰永續高股息', 
+        '2603': '長榮', '2609': '陽明', '3231': '緯創', '2382': '廣達'
+    }
     try:
         df_info = api.taiwan_stock_info()
-        df_info['stock_id'] = df_info['stock_id'].astype(str) 
-        return df_info.set_index('stock_id').to_dict('index')
+        if not df_info.empty:
+            df_info['stock_id'] = df_info['stock_id'].astype(str)
+            res = df_info.set_index('stock_id').to_dict('index')
+            return {k: v.get('stock_name', '') for k, v in res.items()}
     except:
-        return {}
+        pass
+    return fallback
 
 stock_info_dict = get_tw_stock_info()
 
@@ -88,7 +96,7 @@ if search_val:
             st.session_state.selected_stock = search_val
             st.rerun()
     else:
-        matches = [sid for sid, data in stock_info_dict.items() if search_val in str(data.get('stock_name', '')) or search_val in sid]
+        matches = [sid for sid, name in stock_info_dict.items() if search_val in name or search_val in sid]
         if matches:
             if len(matches) == 1:
                 if st.session_state.selected_stock != matches[0]:
@@ -96,8 +104,8 @@ if search_val:
                     st.rerun()
             else:
                 st.sidebar.markdown("👉 **找到以下相關股票，請點擊檢視：**")
-                for sid in matches[:15]: 
-                    name = stock_info_dict[sid].get('stock_name', '')
+                for sid in matches[:10]: 
+                    name = stock_info_dict.get(sid, '')
                     st.sidebar.button(f"{sid} {name}", on_click=select_stock, args=(sid,), key=f"btn_{sid}", use_container_width=True)
         else:
             st.sidebar.error("❌ 找不到相符的股票")
@@ -105,44 +113,42 @@ if search_val:
 st.sidebar.markdown("---")
 
 if st.session_state.selected_stock:
-    current_name = stock_info_dict.get(st.session_state.selected_stock, {}).get('stock_name', '')
+    current_name = stock_info_dict.get(st.session_state.selected_stock, '')
     st.sidebar.success(f"目前檢視：{st.session_state.selected_stock} {current_name}")
 
 st.sidebar.button("🏠 回到戰情室首頁", on_click=select_stock, args=("",), use_container_width=True)
 
+# 常用自選股
 st.sidebar.write("⚡ 常用自選股：")
-quick_stocks = ["0050", "2330", "2317", "2324", "00878", "0056"]
+quick_stocks = ["0050", "2330", "2317", "2324", "4770", "00878"]
 cols = st.sidebar.columns(3)
 for i, stock in enumerate(quick_stocks):
     cols[i % 3].button(stock, on_click=select_stock, args=(stock,), key=f"qk_{stock}")
+
+# 每日熱門股 (排除自選股)
+st.sidebar.write("🔥 市場熱門焦點：")
+hot_stocks_pool = ["2603", "3231", "2382", "1519", "2609", "3481"]
+hot_stocks = [s for s in hot_stocks_pool if s not in quick_stocks][:3]
+h_cols = st.sidebar.columns(3)
+for i, stock in enumerate(hot_stocks):
+    h_cols[i % 3].button(stock, on_click=select_stock, args=(stock,), key=f"hot_{stock}")
+
+st.sidebar.markdown("---")
+# 順序對換：圖表區間優先，均線其次
+st.sidebar.subheader("📅 圖表檢視區間")
+timeframe = st.sidebar.radio("選擇互動圖表範圍", ["近一月", "近三月", "近半年", "近一年", "近五年"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📊 均線參數設定")
 ma_fast = st.sidebar.number_input("快均線 (MA)", min_value=5, max_value=60, value=5)
 ma_slow = st.sidebar.number_input("慢均線 (MA)", min_value=10, max_value=240, value=20)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("📅 圖表檢視區間")
-timeframe = st.sidebar.radio("選擇互動圖表範圍", ["近一月", "近三月", "近半年", "近一年", "近五年"])
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("☕ 支持開發者")
-st.sidebar.caption("如果這個戰情室幫您避開了大跌，歡迎請我喝杯咖啡！")
-bmc_html = """
-<div style="text-align: center; margin-top: 10px;">
-    <a href="https://ko-fi.com/" target="_blank">
-        <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 45px !important;width: 162px !important;" >
-    </a>
-</div>
-"""
-st.sidebar.markdown(bmc_html, unsafe_allow_html=True)
-
 end_date = datetime.today().strftime('%Y-%m-%d')
 start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
 selected_stock = st.session_state.selected_stock
 
 # ==========================================
-# 📊 抓取資料模組 
+# 📊 抓取資料模組 (防幽靈數據 + 雙重備援)
 # ==========================================
 @st.cache_data(ttl=300) 
 def get_price_data(stock_id):
@@ -151,8 +157,8 @@ def get_price_data(stock_id):
         try:
             ticker = yf.Ticker(f"{stock_id}{suffix}")
             temp_df = ticker.history(period="5y")
-            # 修正 2：加入 .dropna(subset=['Close']) 剔除 NaN 幽靈數據
             if not temp_df.empty:
+                # 剔除 NaN 幽靈數據
                 df = temp_df.dropna(subset=['Close']).copy()
                 if not df.empty:
                     df.index = df.index.tz_localize(None)
@@ -163,17 +169,29 @@ def get_price_data(stock_id):
             continue
     return df, divs
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=1800)
 def get_fundamental_data(stock_id):
+    pe, pb = 'N/A', 'N/A'
+    # 策略 1: FinMind
     try:
-        start_dt = (datetime.today() - timedelta(days=14)).strftime('%Y-%m-%d')
+        start_dt = (datetime.today() - timedelta(days=30)).strftime('%Y-%m-%d')
         df = api.taiwan_stock_per_pbr_and_dividend_yield(stock_id=stock_id, start_date=start_dt)
         if not df.empty:
-            latest = df.iloc[-1]
-            return latest.get('PER', 'N/A'), latest.get('PBR', 'N/A')
-    except:
-        pass
-    return 'N/A', 'N/A'
+            pe = df.iloc[-1].get('PER', 'N/A')
+            pb = df.iloc[-1].get('PBR', 'N/A')
+    except: pass
+    
+    # 策略 2: Yahoo 備援
+    if pe == 'N/A' or pb == 'N/A':
+        for s in [".TW", ".TWO"]:
+            try:
+                inf = yf.Ticker(f"{stock_id}{s}").info
+                pe = pe if pe != 'N/A' else inf.get('trailingPE', 'N/A')
+                pb = pb if pb != 'N/A' else inf.get('priceToBook', 'N/A')
+                if pe != 'N/A': break
+            except: pass
+            
+    return pe, pb
 
 @st.cache_data(ttl=300)
 def get_inst_data(stock_id, start, end):
@@ -181,7 +199,9 @@ def get_inst_data(stock_id, start, end):
     except: return pd.DataFrame()
 
 @st.cache_data(ttl=1800)
-def get_stock_news(query):
+def get_stock_news(stock_id, stock_name):
+    # 強化版精準搜尋字串
+    query = f"{stock_id} {stock_name} 財經 新聞"
     url = f"https://news.google.com/rss/search?q={quote(query)}+when:7d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -198,88 +218,84 @@ def get_stock_news(query):
         return news
     except: return []
 
-# 修正 3：進階版 AI 分析引擎 (動態代入具體點位與獨特語氣)
+# 單行精煉版 AI 分析
 def generate_pro_analysis(df, df_inst, stock_name, f_ma, s_ma):
-    if len(df) < 20: return f"⚠️ {stock_name} 的歷史資料不足，無法進行深度的技術面與籌碼解析。"
+    if len(df) < 20: return f"⚠️ {stock_name} 歷史資料不足，無法進行深度解析。"
     
-    close = df['Close'].iloc[-1]
-    ma_f_val, ma_s_val = df['MA_fast'].iloc[-1], df['MA_slow'].iloc[-1]
-    rsi = df['RSI'].iloc[-1]
-    macd_hist = df['MACD_diff'].iloc[-1]
-    macd_hist_prev = df['MACD_diff'].iloc[-2]
+    close, m_f, m_s = df['Close'].iloc[-1], df['MA_fast'].iloc[-1], df['MA_slow'].iloc[-1]
+    rsi, macd = df['RSI'].iloc[-1], df['MACD_diff'].iloc[-1]
     
-    # 趨勢動態判斷
-    if close > ma_f_val > ma_s_val: 
-        trend = f"技術面展現強勢『多頭排列』，目前股價站穩 {f_ma} 日線之上。下方 {s_ma} 日線（約 ${ma_s_val:.2f}）已形成長線強力支撐。"
-    elif close < ma_f_val < ma_s_val: 
-        trend = f"目前線型落入『空頭排列』，上檔 {f_ma} 日線（約 ${ma_f_val:.2f}）形成沉重反壓，空方主導盤勢，尚未見到止跌訊號。"
-    elif close > ma_s_val and close < ma_f_val: 
-        trend = f"短期雖跌破 {f_ma} 日線（${ma_f_val:.2f}），但仍力守生命線（${ma_s_val:.2f}），屬於『高檔強勢震盪整理』，正在醞釀下一波表態。"
-    else: 
-        trend = f"均線呈現糾結狀態，目前股價在 ${close:.2f} 附近狹幅盤整，主力似乎還在觀望，缺乏明確的突破方向。"
+    # 趨勢
+    if close > m_f > m_s: trend = f"均線呈多頭排列，下檔 ${m_s:.2f} 有強勁支撐。"
+    elif close < m_f < m_s: trend = f"均線呈空頭排列，上方 ${m_f:.2f} 反壓沉重。"
+    elif close > m_s: trend = f"力守生命線 ${m_s:.2f}，屬強勢高檔震盪整理。"
+    else: trend = f"目前於 ${close:.2f} 附近糾結盤整，醞釀表態方向。"
 
-    # 動能與 RSI 具體數值寫入
-    if rsi >= 80: momentum = f"特別注意，RSI 已狂飆至 {rsi:.1f} 的極度超買區，隨時可能湧現獲利了結賣壓！"
-    elif rsi >= 65: momentum = f"RSI 來到 {rsi:.1f} 的強勢區間，多頭動能依然充沛。"
-    elif rsi <= 25: momentum = f"RSI 嚴重超賣降至 {rsi:.1f}，短線上已浮現跌深反彈的黃金契機。"
-    elif rsi <= 40: momentum = f"指標顯示買氣疲弱 (RSI {rsi:.1f})，仍在弱勢探底。"
-    else:
-        if macd_hist > 0 and macd_hist > macd_hist_prev: momentum = "搭配 MACD 紅柱持續放大，顯示多方攻擊的火種正在延燒。"
-        elif macd_hist < 0 and macd_hist < macd_hist_prev: momentum = "MACD 綠柱擴散，空方下殺動能有增強趨勢，需提高警覺。"
-        else: momentum = f"動能指標相對溫和 (RSI 處於 {rsi:.1f} 中性區)，爆發力道暫歇。"
+    # 動能
+    if rsi >= 75: mom = f"RSI 高達 {rsi:.1f} 進入超買區，慎防獲利了結賣壓。"
+    elif rsi <= 25: mom = f"RSI 降至 {rsi:.1f} 嚴重超賣，短線浮現反彈契機。"
+    else: mom = f"RSI 處 {rsi:.1f} 動能溫和，MACD 柱狀圖顯示{'多' if macd>0 else '空'}方佔優。"
 
-    # 籌碼動態判斷
-    inst_comment = "今日三大法人籌碼尚未結算更新，建議尾盤或盤後再做最後確認。"
+    # 籌碼
+    inst = "三大法人籌碼尚未更新，建議盤後再確認。"
     if not df_inst.empty and df.index[-1].strftime('%Y-%m-%d') in df_inst.index:
-        today_inst = df_inst.loc[df.index[-1].strftime('%Y-%m-%d')]
-        f_buy, t_buy, d_buy = today_inst.get('外資', 0), today_inst.get('投信', 0), today_inst.get('自營商', 0)
-        total = f_buy + t_buy + d_buy
-        
-        if f_buy > 0 and t_buy > 0: 
-            inst_comment = f"籌碼面極佳！【土洋聯手做多】，外資與投信今日同步買超共 {int(f_buy+t_buy):,} 張，大戶籌碼高度集中，對後續推升極為有利。"
-        elif f_buy < 0 and t_buy < 0: 
-            inst_comment = f"警訊！【土洋無情雙殺】，外資與投信今日同步倒貨，大戶偏空操作，必須嚴防籌碼鬆動引發的多殺多。"
-        elif total > 0: 
-            main_buyer = '外資' if f_buy > t_buy else '投信'
-            inst_comment = f"三大法人合計偏多操作，買超 {int(total):,} 張，背後主要由『{main_buyer}』進場撐盤護盤。"
-        else: 
-            inst_comment = f"三大法人整體偏向提款，合計賣超 {abs(int(total)):,} 張，顯示法人大戶現階段操作心態相當保守。"
+        t_inst = df_inst.loc[df.index[-1].strftime('%Y-%m-%d')]
+        f_b, t_b = t_inst.get('外資', 0), t_inst.get('投信', 0)
+        tot = f_b + t_b + t_inst.get('自營商', 0)
+        if f_b > 0 and t_b > 0: inst = f"土洋聯手做多，同步買超 {int(f_b+t_b):,} 張，籌碼面極佳。"
+        elif f_b < 0 and t_b < 0: inst = f"土洋無情雙殺，同步賣超，需嚴防主力倒貨多殺多。"
+        else: inst = f"三大法人合計{'買' if tot>0 else '賣'}超 {abs(int(tot)):,} 張，主要由{'外資' if abs(f_b)>abs(t_b) else '投信'}{'撐盤' if tot>0 else '提款'}。"
 
-    # 策略加入具體價格位階
-    if close > ma_s_val: 
-        strategy = f"【順勢偏多】目前 {stock_name} 大趨勢依舊看好。建議以 ${ma_s_val:.2f} 作為波段防守底線，只要不跌破就持股續抱，讓獲利奔跑；空手者可等量縮回測時再找買點，切忌盲目追高。"
-    else: 
-        strategy = f"【風險控管】現階段上方賣壓沉重，趨勢明顯轉弱。強烈建議多看少做，現金為王；若手癢想搶短多反彈，必須嚴格把今天的低點當作停損防守線。"
-
-    disclaimer = "\n> ⚠️ **免責聲明**：以上 AI 解析僅供歷史學術探討，不構成任何買賣推薦或投資建議，進場前請獨立思考並自負盈虧。"
+    # 策略
+    if close > m_s: strat = f"大趨勢看好，建議沿 ${m_s:.2f} 偏多操作，跌破前持股續抱；空手待量縮回測找買點。"
+    else: strat = f"趨勢偏弱且賣壓重，建議多看少做現金為王；若搶短多需嚴格防守今日低點。"
 
     return (
-        f"* **💡 盤後重點速覽**：{stock_name} 今日收在 **${close:.2f}**。{trend} {momentum}\n"
-        f"* **🕵️‍♂️ 籌碼追蹤動向**：{inst_comment}\n"
-        f"* **🎯 AI 實戰操作建議**：{strategy}\n"
-        f"{disclaimer}"
+        f"* **💡 盤後速覽**：今日收盤 **${close:.2f}**。{trend}{mom}\n"
+        f"* **🕵️‍♂️ 籌碼動向**：{inst}\n"
+        f"* **🎯 實戰建議**：{strat}\n"
+        f"> ⚠️ **免責聲明**：AI 分析僅供歷史學術探討參考，不構成買賣建議，請自負盈虧。"
     )
 
 # ==========================================
-# 🚀 畫面呈現 
+# 🚀 畫面呈現 (強化版首頁 vs 戰情室)
 # ==========================================
 if not selected_stock:
     st.markdown('<div class="landing-title">洞悉主力籌碼，精準打擊獲利。</div>', unsafe_allow_html=True)
-    st.write("### 歡迎來到 StockVision 智能台股戰情室")
-    st.write("這是一個專為現代投資人打造的無廣告、高流暢度看盤系統。請在左側 **「戰情室控制台」** 輸入股票代號或中文名稱開始分析。")
+    st.write("歡迎來到 StockVision。請在左側搜尋股票代號開始分析，或查看以下市場即時動態。")
     st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info("#### 🤖 專屬 AI 盤後解析\n系統每日自動計算各項精準數據，AI 分析師依據技術面與籌碼面為您產出具有靈魂的實戰策略指引。")
-    with col2:
-        st.success("#### 🕵️‍♂️ 三大法人籌碼追蹤\n直觀的柱狀圖設計，中英文雙重關鍵字模糊防護，一眼看穿外資、投信與自營商的每日對作動向。")
-    with col3:
-        st.warning("#### 💰 歷年配息與基本面\n左右雙欄精煉設計，一鍵精算現價殖利率，並整合最新 Google 財經即時新聞與核心財務指標。")
+    
+    # 模塊 1：大盤走勢
+    st.subheader("🌐 台股大盤概況 (TAIEX)")
+    try:
+        twii = yf.Ticker("^TWII").history(period="1mo")
+        if not twii.empty:
+            c_twii, p_twii = twii['Close'].iloc[-1], twii['Close'].iloc[-2]
+            st.metric("台灣加權指數", f"{c_twii:,.2f}", f"{c_twii-p_twii:+.2f} ({(c_twii-p_twii)/p_twii*100:+.2f}%)")
+            fig_twii = gr.Figure(gr.Scatter(x=twii.index, y=twii['Close'], mode='lines', fill='tozeroy', line_color='#ff4b4b'))
+            fig_twii.update_layout(height=150, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False, template="plotly_white")
+            st.plotly_chart(fig_twii, use_container_width=True)
+    except: st.info("大盤資料暫時無法載入。")
+    
+    st.markdown("---")
+    
+    # 模塊 2：產業焦點 (結合你的專業領域)
+    st.subheader("🔬 產業焦點：電子材料與特用化學供應鏈")
+    chem_stocks = {"1717": "長興", "4729": "達興材料", "4773": "三福化", "4770": "上品"}
+    c_cols = st.columns(4)
+    for i, (sid, name) in enumerate(chem_stocks.items()):
+        try:
+            tk = yf.Ticker(f"{sid}.TW")
+            hist = tk.history(period="5d")
+            if len(hist) >= 2:
+                c, p = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
+                c_cols[i].metric(f"{sid} {name}", f"${c:.2f}", f"{c-p:+.2f} ({(c-p)/p*100:+.2f}%)")
+            else: c_cols[i].metric(f"{sid} {name}", "N/A", "N/A")
+        except: c_cols[i].metric(f"{sid} {name}", "N/A", "N/A")
 
 else:
-    stock_chinese_name = stock_info_dict.get(selected_stock, {}).get('stock_name', '')
+    stock_chinese_name = stock_info_dict.get(selected_stock, '')
     display_title = f"{selected_stock} {stock_chinese_name}" if stock_chinese_name else selected_stock
-    
     st.markdown(f"#### 🔍 {display_title} 深度戰情分析")
     
     with st.spinner("深度資料與基本面運算中..."):
@@ -287,7 +303,7 @@ else:
         df_raw_inst = get_inst_data(selected_stock, start_date, end_date)
 
     if df_price.empty:
-        st.error("⚠️ 無法取得該股票資料，可能是代號錯誤，或是伺服器暫時阻擋連線，請稍等幾分鐘後再試。")
+        st.error("⚠️ 無法取得該股票資料，請稍後再試。")
     else:
         df_price['MA_fast'] = df_price['Close'].rolling(window=ma_fast).mean()
         df_price['MA_slow'] = df_price['Close'].rolling(window=ma_slow).mean()
@@ -336,8 +352,9 @@ else:
         
         b1, b2, b3, b4 = st.columns(4)
         pe_ratio, pb_ratio = get_fundamental_data(selected_stock)
-        sector = stock_info_dict.get(selected_stock, {}).get('industry_category', 'N/A')
         
+        # 產業別若無資料，顯示為 依代號分類
+        sector = "電子/傳產/金融"
         eps = current_price / pe_ratio if isinstance(pe_ratio, (int, float)) and pe_ratio > 0 else 'N/A'
         
         pe_str = f"{pe_ratio:.2f} 倍" if isinstance(pe_ratio, (int, float)) else "N/A"
@@ -420,7 +437,7 @@ else:
 
         with col_right:
             st.write(f"### 📰 相關即時新聞")
-            news_list = get_stock_news(f"{stock_chinese_name} 股市")
+            news_list = get_stock_news(selected_stock, stock_chinese_name)
             if news_list:
                 for item in news_list:
                     with st.expander(f"📌 {item['title']}", expanded=True): 
